@@ -1,0 +1,39 @@
+# Общее описание задачи 
+
+Создать LLM-агента на основе gpt4.1, подключенного через openRouter.
+Задаче агента - написать код создания презентации с помощью python-pptx.
+Задание для презентации передается в виде текстового файла.
+Код создается в папке .generated.
+Затем код запускается, если есть ошибки - исправляется.
+Презентация создается в папке .output.
+
+Python установлен в .venv
+Ключ к openRounter есть в .env (и environment)
+
+Входные данные:
+- задание в виде текстового файла
+
+Выходные - код создания презентации
+
+# Тестовый пример
+
+Пример текстового файла data/data01.md
+
+# Подключение к openRouter
+
+from openai import OpenAI
+
+MODEL_ID = "gpt-4.1-mini"
+
+    client = OpenAI(
+        base_url="https://openrouter.ai/api/v1",
+        api_key=os.getenv("OPENROUTER_API_KEY")
+    )
+
+
+        resp = client.beta.chat.completions.parse(
+            model= MODEL_ID,
+            response_format= ....,
+            messages= messages,
+			temperature = 0
+        )
