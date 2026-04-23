@@ -42,6 +42,42 @@ class CodeExecutor:
         logger.warning("venv Python not found, using system python")
         return Path("python")
 
+    def _extract_output_path_from_stdout(self, stdout: str) -> Path | None:
+        """
+        Extract output file path from stdout.
+
+        Looks for patterns like "Presentation saved to <path>"
+
+        Args:
+            stdout: Standard output from code execution
+
+        Returns:
+            Path to output file or None if not found
+        """
+        import re
+
+        if not stdout:
+            return None
+
+        # Look for "Presentation saved to <path>" or "saved to <path>"
+        patterns = [
+            r'Presentation saved to (.+\.pptx)',
+            r'saved to (.+\.pptx)',
+            r'Saved to (.+\.pptx)',
+            r'Created (.+\.pptx)',
+            r'Output: (.+\.pptx)',
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, stdout, re.IGNORECASE)
+            if match:
+                path_str = match.group(1).strip()
+                output_path = Path(path_str)
+                logger.debug(f"Extracted output path from stdout: {output_path}")
+                return output_path
+
+        return None
+
     def save_code(self, code: str, filename: str) -> Path:
         """
         Save generated code to .generated directory.
@@ -91,7 +127,19 @@ class CodeExecutor:
 
             # Check return code
             if result.returncode == 0:
-                # Check for .pptx files modified after execution started
+                # Try to extract output path from stdout (code prints "Presentation saved to <path>")
+                output_file = self._extract_output_path_from_stdout(result.stdout)
+
+                if output_file and output_file.exists():
+                    logger.info(f"Code executed successfully, output: {output_file}")
+                    return CodeExecutionResult(
+                        success=True,
+                        output_file=output_file,
+                        stdout=result.stdout,
+                        stderr=result.stderr
+                    )
+
+                # Fallback: Check for .pptx files modified after execution started in .output/
                 pptx_files = list(self.output_dir.glob("*.pptx"))
                 modified_files = [
                     f for f in pptx_files
@@ -113,7 +161,7 @@ class CodeExecutor:
                     logger.warning("Code executed but no .pptx file found")
                     return CodeExecutionResult(
                         success=False,
-                        error_message="No .pptx file created in .output/ directory",
+                        error_message="No .pptx file created",
                         stdout=result.stdout,
                         stderr=result.stderr
                     )

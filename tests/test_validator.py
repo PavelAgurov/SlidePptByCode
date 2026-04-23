@@ -35,6 +35,44 @@ def test_parse_expected_slide_count_max():
     assert count == 5
 
 
+def test_parse_expected_slide_count_ignores_h3_only():
+    """H3/H4 headings must not be counted as H2 slide headers."""
+    task_content = """
+### Section A
+#### Subsection
+"""
+    assert parse_expected_slide_count(task_content) == 0
+
+
+def test_parse_expected_slide_count_h2_with_h3_between():
+    """Real ## lines count; ### between them do not."""
+    task_content = """
+## First slide
+### Sub only
+## Second slide
+"""
+    assert parse_expected_slide_count(task_content) == 2
+
+
+def test_parse_expected_slide_count_h3_slide_marker_ignored():
+    """### Slide N must not contribute to max slide number."""
+    task_content = """
+### Slide 99 — bogus
+## Slide 1 — real
+## Slide 2 — real
+"""
+    assert parse_expected_slide_count(task_content) == 2
+
+
+def test_parse_expected_slide_count_title_plus_h3_only():
+    """H1 title slide counts; ### alone does not add body slides."""
+    task_content = """# Main Title
+### Only H3
+#### H4
+"""
+    assert parse_expected_slide_count(task_content) == 1
+
+
 def test_validate_presentation_missing_file():
     """Test validation of non-existent file."""
     result = validate_presentation(Path("nonexistent.pptx"), "")

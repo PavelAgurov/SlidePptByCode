@@ -13,9 +13,10 @@ This tool takes a text/markdown description of a presentation and uses GPT-4.1 (
 ## Features
 
 - **Automated Code Generation**: LLM generates complete python-pptx code from natural language descriptions
+- **Chart & Graph Support**: Create native PowerPoint charts (column, line, pie, etc.) from CSV data with brand colors
 - **Style Guidelines Support**: Apply custom styling rules (colors, fonts, tone) via `--style` parameter
 - **Smart Error Recovery**: Automatically detects and fixes execution errors through retry mechanism
-- **Validation**: Verifies generated presentations match specifications (slide count, titles)
+- **Validation**: Verifies generated presentations match specifications (slide count, titles, content)
 - **Structured Output**: Uses Pydantic models for reliable LLM responses
 - **Safe Execution**: Runs generated code in isolated subprocess with timeout
 - **Comprehensive Logging**: Detailed logs in `.logs/` directory
@@ -71,10 +72,10 @@ python src/main.py data/data01.md
 python src/main.py data/data01.md --verbose
 
 # Apply style guidelines
-python src/main.py data/data01.md --style data/style.md
+python src/main.py data/data01.md --style styles/style.md
 
 # Use different model
-python src/main.py data/data01.md --model gpt-4.1
+python src/main.py data/data01.md --model "gpt-4.1"
 
 # Custom retry limit
 python src/main.py data/data01.md --max-retries 5
@@ -83,14 +84,16 @@ python src/main.py data/data01.md --max-retries 5
 python src/main.py data/data01.md --timeout 120
 
 # Combine multiple options
-python src/main.py data/data01.md --style data/style.md --model gpt-4.1 --verbose
+python src/main.py data/data01.md --style styles/style.md --model "gpt-4.1" --verbose
 ```
+
+On **Windows PowerShell**, unquoted model names that contain `-` (for example `gpt-4.1`) can be parsed as expressions instead of a single argument. Use quotes as above, or a single token such as `--model=gpt-4.1`.
 
 ### Style Guidelines
 
 The `--style` parameter allows you to specify visual and content style guidelines for the presentation. This is useful for maintaining brand consistency or applying specific formatting rules.
 
-**Example style file** (`data/style.md`):
+**Example style file** (`styles/style.md`):
 ```markdown
 Use string MS Office styles
 Slides should be readable.
@@ -135,11 +138,82 @@ Content for the first slide...
 Final remarks...
 ```
 
+**Required structure for task files:** the CLI always runs **chunked** generation (one LLM pass for the title block — everything from the first `#` through the line before the first `##` — then one pass per `##` slide). Your markdown **must** include:
+
+- An **H1** line (`# Presentation title`) before any **H2** slide heading.
+- At least one **H2** line (`## Slide title`) for content slides.
+
+If this structure is missing or the first `##` appears before the first `#`, the program exits with a clear `ValueError` (no single-pass fallback). Chunking is always on; a previous `--chunk-by-h2` CLI flag is removed.
+
 The tool will:
 - Parse `## Slide N` markers to determine expected slide count
 - Extract titles and content for each slide
 - Generate appropriate python-pptx code
 - Create the presentation in `.output/` directory
+
+### Creating Charts and Graphs
+
+The tool supports creating native PowerPoint charts from CSV data. Charts are fully editable in PowerPoint after generation.
+
+**Specifying Chart Type:**
+
+You can specify chart type in two ways:
+
+1. **Chart directive** (recommended): Add `chart: <type>` before or after the CSV data
+2. **Natural language**: Describe the chart in text (e.g., "Display as a line chart")
+
+**Supported chart types:**
+- `chart: column` - Clustered column chart (default for multi-series)
+- `chart: column_stacked` - Stacked column chart
+- `chart: bar` - Horizontal bar chart
+- `chart: line` - Line chart
+- `chart: line_markers` - Line chart with markers
+- `chart: pie` - Pie chart (default for proportions)
+- `chart: doughnut` - Doughnut chart
+- `chart: area` - Area chart
+- `chart: scatter` - Scatter plot
+
+**Example with charts** (`data/charts_example.md`):
+
+```markdown
+# Sales Dashboard
+
+## Slide 1 — Revenue Trends
+
+chart: line_markers
+
+month,product_A,product_B,product_C
+2025-01,120000,95000,60000
+2025-02,135000,102000,72000
+2025-03,150000,110000,80000
+2025-04,170000,130000,95000
+
+## Slide 2 — Market Share
+
+chart: pie
+
+product,percentage
+Product A,45
+Product B,30
+Product C,25
+
+## Slide 3 — Quarterly Performance
+
+chart: column_stacked
+
+quarter,revenue,costs
+Q1,355000,297000
+Q2,515000,395000
+Q3,605000,460000
+Q4,720000,550000
+```
+
+Generate the presentation:
+```bash
+python src/main.py data/charts_example.md --style styles/style-epam.md
+```
+
+When using style guidelines, chart colors automatically match your brand colors for consistency.
 
 ## Project Structure
 
@@ -156,7 +230,6 @@ SlidePptCode/
 │   └── prompts.py           # System prompts and templates
 ├── tests/
 │   ├── test_*.py            # Unit tests
-│   ├── test_integration.py  # Integration tests with real LLM
 │   └── fixtures/            # Test data
 ├── data/                    # Input task specifications
 ├── .generated/              # Generated Python code (auto-created)
@@ -189,25 +262,17 @@ EXECUTION_TIMEOUT=60
 
 ## Testing
 
-### Run Unit Tests
+### Run Tests
 
 ```bash
-# All unit tests
-python -m pytest tests/ -v --ignore=tests/test_integration.py
+# All tests
+python -m pytest tests/ -v
 
 # Specific test file
 python -m pytest tests/test_validator.py -v
 
 # With coverage
 python -m pytest tests/ -v --cov=src --cov-report=html
-```
-
-### Run Integration Tests
-
-Integration tests make real API calls to OpenRouter:
-
-```bash
-python -m pytest tests/test_integration.py -v -m integration
 ```
 
 ## How It Works

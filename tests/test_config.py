@@ -10,7 +10,7 @@ def test_settings_defaults():
     # Create settings with minimal required fields
     settings = Settings(openrouter_api_key="test_key")
 
-    assert settings.model_id == "gpt-4.1-mini"
+    assert settings.model_id == "gpt-4.1"
     assert settings.base_url == "https://openrouter.ai/api/v1"
     assert settings.temperature == 0
     assert settings.max_retries == 3

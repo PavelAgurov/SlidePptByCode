@@ -27,6 +27,18 @@ class GeneratedCode(BaseModel):
         return v
 
 
+class ChunkedSectionGeneratedCode(BaseModel):
+    """Single H2-section fragment for chunked generation (no full script)."""
+
+    code: str = Field(
+        description="Python defining exactly one def add_section_NNN(prs): ..."
+    )
+    explanation: str = Field(
+        default="",
+        description="Brief note on the slide content",
+    )
+
+
 class CodeExecutionResult(BaseModel):
     """Result of executing generated code."""
 

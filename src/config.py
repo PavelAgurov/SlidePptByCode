@@ -17,7 +17,7 @@ class Settings(BaseSettings):
 
     # API Configuration
     openrouter_api_key: str
-    model_id: str = "gpt-4.1-mini"
+    model_id: str = "gpt-4.1"
     base_url: str = "https://openrouter.ai/api/v1"
     temperature: float = 0
 

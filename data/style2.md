@@ -1,1 +1,0 @@
-Use black background and white font colors.
