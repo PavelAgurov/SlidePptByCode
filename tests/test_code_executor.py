@@ -76,6 +76,10 @@ def test_execute_failure(executor):
     assert result.success is False
     assert result.error_message is not None
     assert result.output_file is None
+    assert "ValueError" in (result.stderr or "")
+    assert "Test error" in (result.stderr or "")
+    assert "ValueError" in result.error_message
+    assert "Test error" in result.error_message
 
 
 def test_execute_timeout(executor, mock_config):

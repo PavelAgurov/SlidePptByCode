@@ -530,7 +530,7 @@ STRUCTURED OUTPUT (critical):
 INCREMENTAL H1 CONTRACT (orchestrator injects path constants at the top of the file):
 - Variables ``DECK_PPTX_PATH`` and ``SHARED_PY_PATH`` are already defined (do not redefine).
 - Open the existing deck with ``prs = Presentation(str(DECK_PPTX_PATH))``. Do NOT call ``Presentation()`` with no arguments to create a new template for the deck.
-- Implement the title / H1 block from the markdown: fill the first slide(s) as appropriate. Prefer editing the existing blank slide from the stub rather than adding many slides, unless the task clearly needs more.
+- Implement the title / H1 block from the markdown: fill the first slide(s) as appropriate. Prefer editing an existing title slide (or the most suitable existing slide) rather than adding many new slides, unless the task clearly needs more. Do not remove existing slides unless the task explicitly requires it.
 - Write the shared style/helper module to ``SHARED_PY_PATH`` using ``SHARED_PY_PATH.write_text(...)`` (UTF-8). This file must be valid Python and importable; put palette helpers (e.g. hex_to_rgb), layout helpers, and any constants used across slides there.
 - After writing ``shared.py``, you may load it with importlib from ``SHARED_PY_PATH`` and use it when building the H1 slide(s), or duplicate minimal logic — but the file on disk must exist and be usable by later slide scripts.
 - Save only to ``DECK_PPTX_PATH``: ``prs.save(str(DECK_PPTX_PATH))`` (parent directory already exists).
@@ -583,6 +583,7 @@ def format_incremental_h1_user_message(
     deck_title: str,
     style_content: str | None,
     language: str | None,
+    deck_from_template: bool = False,
 ) -> str:
     """User message for H1: preamble markdown + deck title."""
     parts = [
@@ -590,11 +591,25 @@ def format_incremental_h1_user_message(
         "",
         "Return a single Python program in `code` that imports python-pptx, writes `shared.py` via SHARED_PY_PATH.write_text, then opens and saves the deck at DECK_PPTX_PATH.",
         "",
-        f"Presentation title (from H1): {deck_title}",
-        "",
-        "## MARKDOWN FOR H1 (everything before the first `##`, including the `#` line):",
-        preamble_markdown,
     ]
+    if deck_from_template:
+        parts.extend(
+            [
+                "DECK SOURCE: The file at DECK_PPTX_PATH is a **copy of the user's template** `.pptx`. "
+                "It may already contain **multiple** slides (e.g. branding). Implement the H1 title block "
+                "by **editing** the most appropriate existing slide(s) — usually the first title slide — "
+                "without deleting template slides unless the task explicitly requires that.",
+                "",
+            ]
+        )
+    parts.extend(
+        [
+            f"Presentation title (from H1): {deck_title}",
+            "",
+            "## MARKDOWN FOR H1 (everything before the first `##`, including the `#` line):",
+            preamble_markdown,
+        ]
+    )
     msg = "\n".join(parts)
     return _append_chunk_style_language(
         msg,

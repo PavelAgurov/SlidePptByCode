@@ -5,7 +5,7 @@ from typing import Any, cast
 
 from pptx import Presentation
 
-from src.ppt_bootstrap import create_empty_ppt
+from src.ppt_bootstrap import copy_deck_template, create_empty_ppt
 from src.task_chunker import TaskChunk
 
 
@@ -31,3 +31,19 @@ def test_create_empty_ppt_baseline_and_append(tmp_path: Path) -> None:
     v = validate_scratch_append(p, n0, chunk)
     assert v.is_valid
     assert v.slide_count == n0 + 1
+
+
+def test_copy_deck_template_preserves_source(tmp_path: Path) -> None:
+    src = tmp_path / "source.pptx"
+    dst = tmp_path / "out" / "copy.pptx"
+    n_src = create_empty_ppt(src)
+    src_mtime = src.stat().st_mtime_ns
+    src_bytes = src.read_bytes()
+
+    n_dst = copy_deck_template(src, dst)
+    assert dst.exists()
+    assert n_dst == n_src
+    assert len(Presentation(str(dst)).slides) == n_src
+
+    assert src.read_bytes() == src_bytes
+    assert src.stat().st_mtime_ns == src_mtime

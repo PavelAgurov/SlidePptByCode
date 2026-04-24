@@ -12,7 +12,7 @@ from pptx import Presentation
 from src.code_executor import CodeExecutor
 from src.code_generator import CodeGenerator
 from src.config import Settings
-from src.ppt_bootstrap import create_empty_ppt
+from src.ppt_bootstrap import copy_deck_template, create_empty_ppt
 from src.script_inject import inject_h1_paths, inject_h2_slide_paths
 from src.task_chunker import extract_deck_title, split_into_chunks
 from src.validator import (
@@ -48,6 +48,7 @@ def run_incremental_pipeline(
     config: Settings,
     max_retries: int,
     slide_max: int | None = None,
+    template_pptx: Path | None = None,
 ) -> tuple[bool, Path | None, list[str]]:
     """
     Run incremental generation: H1 (deck stub + shared), then each H2 slide.
@@ -79,7 +80,31 @@ def run_incremental_pipeline(
     scratch_dir = (config.output_dir / "_scratch").resolve()
     scratch_dir.mkdir(parents=True, exist_ok=True)
 
-    create_empty_ppt(deck_path)
+    deck_from_template = template_pptx is not None
+    if template_pptx is not None:
+        tpl = Path(template_pptx).resolve()
+        if not tpl.is_file():
+            error_log.append(f"Template not found: {tpl}")
+            return False, None, error_log
+        if deck_path.resolve() == tpl:
+            error_log.append(
+                "Output deck path equals template path; use a different --output "
+                "so the template file is not overwritten."
+            )
+            return False, None, error_log
+        try:
+            n_slides = copy_deck_template(tpl, deck_path)
+            logger.info(
+                "Initialized deck from template %s (%s slides)", tpl, n_slides
+            )
+        except OSError as e:
+            error_log.append(f"Failed to copy template deck: {e}")
+            return False, None, error_log
+        except Exception as e:
+            error_log.append(f"Template deck is not a valid .pptx: {e}")
+            return False, None, error_log
+    else:
+        create_empty_ppt(deck_path)
 
     # --- H1 ---
     h1_code = generator.generate_incremental_h1(
@@ -87,6 +112,7 @@ def run_incremental_pipeline(
         deck_title,
         style_content,
         language,
+        deck_from_template=deck_from_template,
     ).code
 
     for attempt in range(max_retries):

@@ -10,6 +10,27 @@ from .models import CodeExecutionResult
 
 logger = logging.getLogger(__name__)
 
+# Captured subprocess output can be huge; keep logs and short error_message bounded.
+_EXEC_FAILURE_LOG_MAX = 32768
+_EXEC_FAILURE_ERROR_MESSAGE_MAX = 8000
+
+
+def _failure_detail(stderr: str | None, stdout: str | None) -> str:
+    """Prefer stderr; fall back to stdout when stderr is empty."""
+    out = (stderr or "").strip()
+    if not out:
+        out = (stdout or "").strip()
+    return out
+
+
+def _tail_if_too_long(text: str, max_len: int) -> str:
+    """Keep the end of ``text`` (tracebacks usually end with the exception line)."""
+    if len(text) <= max_len:
+        return text
+    marker = f"... [truncated from {len(text)} chars; showing end]\n"
+    budget = max_len - len(marker)
+    return marker + text[-budget:]
+
 
 class CodeExecutor:
     """Executes generated Python code safely in subprocess."""
@@ -197,13 +218,30 @@ class CodeExecutor:
                         stderr=result.stderr
                     )
             else:
-                logger.error(f"Code execution failed with return code {result.returncode}")
+                detail = _failure_detail(result.stderr, result.stdout)
+                log_snippet = _tail_if_too_long(detail, _EXEC_FAILURE_LOG_MAX)
+                message_snippet = _tail_if_too_long(detail, _EXEC_FAILURE_ERROR_MESSAGE_MAX)
+                if log_snippet:
+                    logger.error(
+                        "Code execution failed with return code %s\n%s",
+                        result.returncode,
+                        log_snippet,
+                    )
+                else:
+                    logger.error(
+                        "Code execution failed with return code %s (no stderr/stdout)",
+                        result.returncode,
+                    )
+                error_message = (
+                    f"Execution failed with return code {result.returncode}"
+                    + (f"\n{message_snippet}" if message_snippet else "")
+                )
                 return CodeExecutionResult(
                     success=False,
-                    error_message=f"Execution failed with return code {result.returncode}",
+                    error_message=error_message,
                     stderr=result.stderr,
                     stdout=result.stdout,
-                    traceback=result.stderr  # stderr often contains traceback
+                    traceback=result.stderr,  # stderr often contains traceback
                 )
 
         except subprocess.TimeoutExpired as e:

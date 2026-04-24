@@ -316,6 +316,7 @@ class CodeGenerator:
         deck_title: str,
         style_content: str | None = None,
         language: str | None = None,
+        deck_from_template: bool = False,
     ) -> GeneratedCode:
         """Generate H1 script: fill deck stub and write ``shared.py``."""
         logger.info("Incremental H1 generation")
@@ -325,6 +326,7 @@ class CodeGenerator:
             deck_title=deck_title,
             style_content=style_content,
             language=language,
+            deck_from_template=deck_from_template,
         )
         self.conversation_history = [
             {"role": "system", "content": SYSTEM_PROMPT_INCREMENTAL_H1},

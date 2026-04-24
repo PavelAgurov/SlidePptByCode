@@ -13,7 +13,7 @@ from src.llm_client import LLMClient
 from src.code_generator import CodeGenerator
 from src.code_executor import CodeExecutor
 from src.task_chunker import validate_chunked_task_markdown
-from src.incremental_runner import run_incremental_pipeline
+from src.incremental_runner import resolve_deck_path, run_incremental_pipeline
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +87,16 @@ def parse_args() -> argparse.Namespace:
         help="Output filename for the presentation (e.g., 'my_presentation.pptx' or 'my_presentation'). If directory not specified, uses '.output/'"
     )
     parser.add_argument(
+        "--template",
+        default=None,
+        metavar="FILE",
+        help=(
+            "Path to a .pptx template; the output deck starts as a copy of this file "
+            "(the template file is never modified). Extension .pptx added if omitted. "
+            "Must differ from --output path."
+        ),
+    )
+    parser.add_argument(
         "--slide_max",
         type=int,
         default=None,
@@ -142,6 +152,19 @@ def normalize_output_filename(output_arg: str | None) -> str | None:
     return result
 
 
+def resolve_template_path(template_arg: str) -> Path:
+    """
+    Resolve a user-provided template path: add ``.pptx`` if missing, resolve, require file.
+    """
+    path = Path(template_arg)
+    if path.suffix.lower() != ".pptx":
+        path = Path(str(path) + ".pptx")
+    path = path.resolve()
+    if not path.is_file():
+        raise FileNotFoundError(f"Template not found or not a file: {path}")
+    return path
+
+
 def _print_token_usage(client: LLMClient | None) -> None:
     """Print cumulative LLM token usage for this run (stdout)."""
     if client is None:
@@ -192,19 +215,29 @@ def main() -> int:
             style_content = style_path.read_text(encoding='utf-8')
             logger.info(f"Read style file: {args.style} ({len(style_content)} characters)")
 
+        # Normalize output filename (needed before template vs output path check)
+        output_filename = normalize_output_filename(args.output)
+
+        template_pptx: Path | None = None
+        if args.template:
+            template_pptx = resolve_template_path(args.template)
+            if resolve_deck_path(output_filename).resolve() == template_pptx:
+                raise ValueError(
+                    "Output path matches the template path; use a different "
+                    "--output so the template file is not overwritten."
+                )
+
         # Initialize components
         llm_client = LLMClient(config)
         generator = CodeGenerator(llm_client)
         executor = CodeExecutor(config)
-
-        # Normalize output filename
-        output_filename = normalize_output_filename(args.output)
 
         success, output_file, error_log = run_incremental_pipeline(
             task_content=task_content,
             style_content=style_content,
             language=args.lang,
             output_filename=output_filename,
+            template_pptx=template_pptx,
             generator=generator,
             executor=executor,
             config=config,
@@ -232,5 +265,5 @@ def main() -> int:
         return 1
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     sys.exit(main())
