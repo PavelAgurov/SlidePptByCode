@@ -58,7 +58,7 @@ def add_section_002(prs):
 
 def test_replace_merge_marker_raises_without_marker():
     with pytest.raises(ValueError, match="Preamble code must contain"):
-        replace_merge_marker("def create_presentation():\n    pass\n", 1)
+        _ = replace_merge_marker("def create_presentation():\n    pass\n", 1)
 
 
 def test_merge_raises_without_create_presentation():
@@ -68,4 +68,4 @@ def add_x():
     {CHUNK_MERGE_MARKER}
 """
     with pytest.raises(ValueError, match="def create_presentation"):
-        merge_chunked_modules(preamble, ["def add_section_001(prs):\n    pass"])
+        _ = merge_chunked_modules(preamble, ["def add_section_001(prs):\n    pass"])

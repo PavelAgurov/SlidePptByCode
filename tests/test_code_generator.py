@@ -1,24 +1,24 @@
 """Tests for code generator."""
 
 import pytest
-from unittest.mock import Mock, MagicMock
+from unittest.mock import Mock
 from src.code_generator import CodeGenerator
 from src.models import GeneratedCode, CodeExecutionResult, ValidationResult
 
 
 @pytest.fixture
-def mock_llm_client():
+def mock_llm_client() -> Mock:
     """Create mock LLM client."""
     return Mock()
 
 
 @pytest.fixture
-def generator(mock_llm_client):
+def generator(mock_llm_client: Mock) -> CodeGenerator:
     """Create code generator instance."""
     return CodeGenerator(mock_llm_client)
 
 
-def test_generate_initial_code(generator, mock_llm_client):
+def test_generate_initial_code(generator: CodeGenerator, mock_llm_client: Mock) -> None:
     """Test initial code generation."""
     # Mock LLM response
     mock_response = GeneratedCode(
@@ -36,10 +36,10 @@ def test_generate_initial_code(generator, mock_llm_client):
     mock_llm_client.generate_structured.assert_called_once()
 
 
-def test_generate_initial_code_with_style(generator, mock_llm_client):
+def test_generate_initial_code_with_style(generator: CodeGenerator, mock_llm_client: Mock) -> None:
     """Test initial code generation with style guidelines."""
     # Mock LLM response
-    mock_response = GeneratedCode(
+    mock_response: GeneratedCode = GeneratedCode(
         code="from pptx import Presentation\nprs = Presentation()",
         explanation="Creates a styled presentation",
         expected_output_filename="test.pptx"
@@ -48,7 +48,7 @@ def test_generate_initial_code_with_style(generator, mock_llm_client):
 
     # Generate code with style
     style_content = "Use blue colors and bold fonts"
-    result = generator.generate_initial_code("Create a presentation", style_content)
+    result: GeneratedCode = generator.generate_initial_code("Create a presentation", style_content)
 
     assert result.code == mock_response.code
     assert generator.style_content == style_content
@@ -61,7 +61,7 @@ def test_generate_initial_code_with_style(generator, mock_llm_client):
     mock_llm_client.generate_structured.assert_called_once()
 
 
-def test_fix_code_after_error(generator, mock_llm_client):
+def test_fix_code_after_error(generator: CodeGenerator, mock_llm_client: Mock) -> None:
     """Test code fixing after error."""
     # Setup conversation history
     generator.conversation_history = [
@@ -70,7 +70,7 @@ def test_fix_code_after_error(generator, mock_llm_client):
     ]
 
     # Mock LLM response
-    mock_response = GeneratedCode(
+    mock_response: GeneratedCode = GeneratedCode(
         code="from pptx import Presentation\nfixed code",
         explanation="Fixed the error",
         expected_output_filename="test.pptx"
@@ -78,7 +78,7 @@ def test_fix_code_after_error(generator, mock_llm_client):
     mock_llm_client.generate_structured.return_value = mock_response
 
     # Create error result
-    error_result = CodeExecutionResult(
+    error_result: CodeExecutionResult = CodeExecutionResult(
         success=False,
         error_message="ImportError",
         traceback="Traceback...",
@@ -93,7 +93,7 @@ def test_fix_code_after_error(generator, mock_llm_client):
     mock_llm_client.generate_structured.assert_called_once()
 
 
-def test_fix_code_after_validation(generator, mock_llm_client):
+def test_fix_code_after_validation(generator: CodeGenerator, mock_llm_client: Mock) -> None:
     """Test code fixing after validation failure."""
     generator.conversation_history = [
         {"role": "system", "content": "system prompt"}

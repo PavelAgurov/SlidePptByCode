@@ -1,6 +1,5 @@
 """Tests for presentation validator."""
 
-import pytest
 from pathlib import Path
 from pptx import Presentation
 from src.validator import parse_expected_slide_count, validate_presentation

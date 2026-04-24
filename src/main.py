@@ -86,7 +86,17 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Output filename for the presentation (e.g., 'my_presentation.pptx' or 'my_presentation'). If directory not specified, uses '.output/'"
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "--slide_max",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Maximum number of H2 (##) content slides to generate; omit for all. Partial runs skip full-deck validation.",
+    )
+    args = parser.parse_args()
+    if args.slide_max is not None and args.slide_max < 0:
+        parser.error("--slide_max must be non-negative")
+    return args
 
 
 def read_task_file(file_path: str) -> str:
@@ -199,6 +209,7 @@ def main() -> int:
             executor=executor,
             config=config,
             max_retries=config.max_retries,
+            slide_max=args.slide_max,
         )
 
         # Report results

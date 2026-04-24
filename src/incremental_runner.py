@@ -47,6 +47,7 @@ def run_incremental_pipeline(
     executor: CodeExecutor,
     config: Settings,
     max_retries: int,
+    slide_max: int | None = None,
 ) -> tuple[bool, Path | None, list[str]]:
     """
     Run incremental generation: H1 (deck stub + shared), then each H2 slide.
@@ -56,11 +57,15 @@ def run_incremental_pipeline(
     """
     error_log: list[str] = []
     chunks = split_into_chunks(task_content)
-    h2_chunks = [c for c in chunks if c.kind == "h2"]
+    h2_all = [c for c in chunks if c.kind == "h2"]
     preamble = next(c for c in chunks if c.kind == "preamble")
-    if not h2_chunks:
+    if not h2_all:
         error_log.append("No H2 sections after validation")
         return False, None, error_log
+
+    h2_to_process = h2_all if slide_max is None else h2_all[:slide_max]
+    num_h2_total = len(h2_all)
+    partial_run = slide_max is not None and len(h2_to_process) < len(h2_all)
 
     deck_title = extract_deck_title(task_content)
     if not deck_title:
@@ -119,9 +124,8 @@ def run_incremental_pipeline(
         return False, None, error_log
 
     # --- H2 slides ---
-    num_h2 = len(h2_chunks)
-    for ord1, chunk in enumerate(h2_chunks, start=1):
-        logger.info("H2 slide %s/%s", ord1, num_h2)
+    for ord1, chunk in enumerate(h2_to_process, start=1):
+        logger.info("H2 slide %s/%s", ord1, num_h2_total)
 
         deck_slide_count_before = len(Presentation(str(deck_path)).slides)
         prefix_before = prefix_slide_digests(deck_path, deck_slide_count_before)
@@ -130,7 +134,7 @@ def run_incremental_pipeline(
             chunk.body,
             deck_title,
             ord1,
-            num_h2,
+            num_h2_total,
             style_content,
             language,
         ).code
@@ -235,6 +239,12 @@ def run_incremental_pipeline(
             break
         else:
             return False, None, error_log
+
+    if partial_run:
+        logger.info(
+            "Partial run (--slide_max): skipping full-deck validation against task spec"
+        )
+        return True, deck_path, error_log
 
     final_val = validate_presentation(deck_path, task_content)
     if not final_val.is_valid:

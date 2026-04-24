@@ -1,6 +1,5 @@
 """Tests for configuration management."""
 
-import pytest
 from pathlib import Path
 from src.config import Settings
 
@@ -34,7 +33,7 @@ def test_settings_custom_values():
     assert settings.max_retries == 5
 
 
-def test_create_directories(tmp_path):
+def test_create_directories(tmp_path : Path):
     """Test directory creation."""
     test_generated = tmp_path / "test_generated"
     test_output = tmp_path / "test_output"

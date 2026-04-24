@@ -5,12 +5,13 @@
   "include": ["src", "tests"],
   "exclude": [".venv", "**/__pycache__"],
   "typeCheckingMode": "basic",
+  "reportUnusedImport": "warning",
   "reportUnannotatedClassAttribute": "none",
-  "reportUnknownMemberType": "none",
+  "reportUnknownMemberType": "warning",
   "reportUnknownArgumentType": "none",
-  "reportUnknownParameterType": "none",
+  "reportUnknownParameterType": "warning",
   "reportUnusedCallResult": "none",
   "reportImplicitStringConcatenation": "none",
-  "reportDeprecated": "none",
+  "reportDeprecated": "warning",
   "reportAny": "none"
 }
