@@ -2,7 +2,12 @@
 
 import pytest
 from pydantic import ValidationError
-from src.models import GeneratedCode, CodeExecutionResult, ValidationResult
+from src.models import (
+    GeneratedCode,
+    IncrementalLlmScriptCode,
+    CodeExecutionResult,
+    ValidationResult,
+)
 
 
 def test_generated_code_valid():
@@ -16,6 +21,15 @@ def test_generated_code_valid():
     assert "from pptx import" in code.code
     assert code.explanation == "Creates a presentation"
     assert code.expected_output_filename == "test.pptx"
+
+
+def test_incremental_llm_script_code_allows_no_pptx_import_in_model():
+    """Incremental parse model does not enforce pptx import (runtime still must)."""
+    m = IncrementalLlmScriptCode(
+        code="print('only shared snippet')",
+        explanation="x",
+    )
+    assert "pptx" not in m.code
 
 
 def test_generated_code_missing_import():

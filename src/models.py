@@ -27,6 +27,31 @@ class GeneratedCode(BaseModel):
         return v
 
 
+class IncrementalLlmScriptCode(BaseModel):
+    """
+    Structured LLM output for incremental H1 / per-slide H2 scripts.
+
+    Unlike ``GeneratedCode``, this does **not** require a pptx import in the
+    validator — the API parser must not reject odd model ordering. Runtime
+    execution still requires valid python-pptx usage.
+    """
+
+    code: str = Field(
+        description=(
+            "One complete Python source file. Must include "
+            "`from pptx import Presentation` or `import pptx`. "
+            "For H1: embed shared module source as a string passed to "
+            "SHARED_PY_PATH.write_text(...); never return only the raw shared.py "
+            "file as this field without pptx imports and deck logic."
+        )
+    )
+    explanation: str = Field(default="", description="Brief note on the approach")
+    expected_output_filename: str = Field(
+        default="presentation.pptx",
+        description="Legacy field; incremental runner uses injected deck paths.",
+    )
+
+
 class ChunkedSectionGeneratedCode(BaseModel):
     """Single H2-section fragment for chunked generation (no full script)."""
 

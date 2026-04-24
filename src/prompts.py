@@ -514,3 +514,165 @@ def format_validation_fix_prompt(
         issues=", ".join(issues) if issues else "None",
         task_content=task_content
     )
+
+
+# ---------------------------------------------------------------------------
+# Incremental pipeline (H1 deck stub + shared.py, then H2 append per slide)
+# ---------------------------------------------------------------------------
+
+SYSTEM_PROMPT_INCREMENTAL_H1 = """You are an expert Python developer using python-pptx.
+
+STRUCTURED OUTPUT (critical):
+- You return **one** Python module in the ``code`` field: normal ``.py`` source, not markdown, not "here is shared.py" as the only payload.
+- The ``code`` string **must** contain an import of python-pptx, e.g. ``from pptx import Presentation`` (and typically ``from pptx.util import Inches, Pt``, etc.) **before** any deck logic.
+- Put the shared helper **source** inside your script as a triple-quoted string (or build it with concatenation) and pass it to ``SHARED_PY_PATH.write_text(..., encoding='utf-8')``. Do **not** return the shared module alone without ``from pptx import Presentation`` and deck code.
+
+INCREMENTAL H1 CONTRACT (orchestrator injects path constants at the top of the file):
+- Variables ``DECK_PPTX_PATH`` and ``SHARED_PY_PATH`` are already defined (do not redefine).
+- Open the existing deck with ``prs = Presentation(str(DECK_PPTX_PATH))``. Do NOT call ``Presentation()`` with no arguments to create a new template for the deck.
+- Implement the title / H1 block from the markdown: fill the first slide(s) as appropriate. Prefer editing the existing blank slide from the stub rather than adding many slides, unless the task clearly needs more.
+- Write the shared style/helper module to ``SHARED_PY_PATH`` using ``SHARED_PY_PATH.write_text(...)`` (UTF-8). This file must be valid Python and importable; put palette helpers (e.g. hex_to_rgb), layout helpers, and any constants used across slides there.
+- After writing ``shared.py``, you may load it with importlib from ``SHARED_PY_PATH`` and use it when building the H1 slide(s), or duplicate minimal logic — but the file on disk must exist and be usable by later slide scripts.
+- Save only to ``DECK_PPTX_PATH``: ``prs.save(str(DECK_PPTX_PATH))`` (parent directory already exists).
+- End with ``if __name__ == '__main__':`` calling a single entry function (e.g. ``main()`` or ``run()``) that performs all steps.
+- Use only the Python standard library plus python-pptx. Do not import requests, Pillow, matplotlib, etc., unless the task explicitly requires them.
+- Do not print the deck path for orchestration; optional logs are fine.
+
+Follow python-pptx best practices from the general system guidance (layouts, RGBColor, etc.)."""
+
+
+SYSTEM_PROMPT_INCREMENTAL_H2 = """You are an expert Python developer using python-pptx.
+
+STRUCTURED OUTPUT (critical):
+- The ``code`` field is **one** runnable ``.py`` file. It **must** include ``from pptx import Presentation`` or ``import pptx`` (in addition to any other imports).
+
+INCREMENTAL SLIDE (H2) CONTRACT (orchestrator injects constants at the top of the file):
+- ``TARGET_PPTX`` is the path to the presentation to modify (scratch or final deck).
+- ``shared`` is already loaded from ``SHARED_PY_PATH`` — use ``shared`` for styling/helpers; do NOT write to ``SHARED_PY_PATH`` and do not redefine it.
+- Open with ``prs = Presentation(str(TARGET_PPTX))``.
+- Append **exactly one** new slide at the end: ``prs.slides.add_slide(...)``. Do not remove slides. Do not modify shapes/text on slides whose index is less than the slide count before your addition (append-only for existing slides).
+- Save back to the same file: ``prs.save(str(TARGET_PPTX))``.
+- End with ``if __name__ == '__main__':`` calling one entry function.
+- Use only the Python standard library plus python-pptx.
+- Do not print paths for orchestration; optional logs are fine."""
+
+
+INCREMENTAL_H2_VALIDATION_FIX_TEMPLATE = """The slide script ran but incremental validation failed.
+
+ORIGINAL CODE:
+```python
+{original_code}
+```
+
+VALIDATION ISSUES:
+{issues}
+
+CONTEXT:
+- Deck title (H1): {deck_title}
+- Slide section markdown:
+{section_markdown}
+
+INSTRUCTIONS:
+1. Fix the code so it still opens ``TARGET_PPTX``, appends exactly one slide, saves to ``TARGET_PPTX``, and uses ``shared`` for styling.
+2. Do not write ``SHARED_PY_PATH`` or change shared on disk.
+3. Return the complete corrected script (full file)."""
+
+
+def format_incremental_h1_user_message(
+    preamble_markdown: str,
+    deck_title: str,
+    style_content: str | None,
+    language: str | None,
+) -> str:
+    """User message for H1: preamble markdown + deck title."""
+    parts = [
+        "Generate the H1 (title deck) step for an incremental build.",
+        "",
+        "Return a single Python program in `code` that imports python-pptx, writes `shared.py` via SHARED_PY_PATH.write_text, then opens and saves the deck at DECK_PPTX_PATH.",
+        "",
+        f"Presentation title (from H1): {deck_title}",
+        "",
+        "## MARKDOWN FOR H1 (everything before the first `##`, including the `#` line):",
+        preamble_markdown,
+    ]
+    msg = "\n".join(parts)
+    return _append_chunk_style_language(
+        msg,
+        style_content,
+        language,
+        style_apply_line="Apply these consistently; encode reusable styling in shared.py.",
+    )
+
+
+def format_incremental_h2_user_message(
+    section_markdown: str,
+    deck_title: str,
+    section_ordinal: int,
+    num_h2_slides: int,
+    style_content: str | None,
+    language: str | None,
+) -> str:
+    """User message for one H2 slide: single section body."""
+    parts = [
+        "Generate one slide-append script for an incremental build.",
+        "",
+        f"Deck title (context): {deck_title}",
+        f"Content slide {section_ordinal} of {num_h2_slides} (document order).",
+        "",
+        "## SECTION MARKDOWN (one `##` slide):",
+        section_markdown,
+    ]
+    msg = "\n".join(parts)
+    return _append_chunk_style_language(
+        msg,
+        style_content,
+        language,
+        style_apply_line="Match styling via the ``shared`` module; do not duplicate large palettes inline.",
+    )
+
+
+def format_incremental_h2_validation_fix_prompt(
+    original_code: str,
+    issues: list[str],
+    deck_title: str,
+    section_markdown: str,
+) -> str:
+    """Validation fix prompt for a single H2 slide script."""
+    return INCREMENTAL_H2_VALIDATION_FIX_TEMPLATE.format(
+        original_code=original_code,
+        issues="\n".join(f"- {i}" for i in issues) if issues else "- (none)",
+        deck_title=deck_title,
+        section_markdown=section_markdown,
+    )
+
+
+INCREMENTAL_H1_VALIDATION_FIX_TEMPLATE = """The H1 deck script ran but validation failed.
+
+ORIGINAL CODE:
+```python
+{original_code}
+```
+
+ISSUES:
+{issues}
+
+H1 MARKDOWN (preamble only):
+{preamble_markdown}
+
+INSTRUCTIONS:
+1. Keep using ``DECK_PPTX_PATH`` and ``SHARED_PY_PATH`` from the injected header; do not remove the orchestrator prefix.
+2. Ensure ``SHARED_PY_PATH`` exists and contains importable Python helpers used for styling.
+3. Ensure the deck saved at ``DECK_PPTX_PATH`` reflects the H1 title block and opens correctly.
+4. Return the complete corrected script."""
+
+
+def format_incremental_h1_validation_fix_prompt(
+    original_code: str,
+    issues: list[str],
+    preamble_markdown: str,
+) -> str:
+    return INCREMENTAL_H1_VALIDATION_FIX_TEMPLATE.format(
+        original_code=original_code,
+        issues="\n".join(f"- {i}" for i in issues) if issues else "- (none)",
+        preamble_markdown=preamble_markdown,
+    )

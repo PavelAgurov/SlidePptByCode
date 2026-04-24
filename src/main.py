@@ -12,8 +12,8 @@ from src.config import load_settings
 from src.llm_client import LLMClient
 from src.code_generator import CodeGenerator
 from src.code_executor import CodeExecutor
-from src.validator import validate_presentation
-from src.task_chunker import split_into_chunks, validate_chunked_task_markdown
+from src.task_chunker import validate_chunked_task_markdown
+from src.incremental_runner import run_incremental_pipeline
 
 logger = logging.getLogger(__name__)
 
@@ -132,110 +132,6 @@ def normalize_output_filename(output_arg: str | None) -> str | None:
     return result
 
 
-def execute_with_retry(
-    task_content: str,
-    style_content: str | None,
-    language: str | None,
-    output_filename: str | None,
-    generator: CodeGenerator,
-    executor: CodeExecutor,
-    max_retries: int,
-    initial_code: str | None = None,
-    initial_explanation: str | None = None,
-) -> tuple[bool, Path | None, list[str]]:
-    """
-    Execute generation and validation with retry loop.
-
-    Args:
-        task_content: Task specification content
-        style_content: Optional style guidelines content
-        language: Optional language for presentation content
-        output_filename: Optional output filename for the presentation
-        generator: Code generator instance
-        executor: Code executor instance
-        max_retries: Maximum retry attempts
-        initial_code: If set, skip initial generation and use this merged script (chunked mode)
-        initial_explanation: Optional short note stored in conversation for retries
-
-    Returns:
-        (success, output_file_path, error_log)
-    """
-    error_log = []
-    current_code = None
-
-    # Initial generation (or pre-built merged code from chunked pipeline)
-    try:
-        if initial_code is not None:
-            logger.info("=== Using merged chunked code (skipping single-pass generate) ===")
-            current_code = initial_code
-            generator.reset_conversation_with_merged_code(
-                initial_code, initial_explanation or "Merged chunked output"
-            )
-        else:
-            logger.info("=== Generating initial code ===")
-            generated = generator.generate_initial_code(
-                task_content, style_content, language, output_filename
-            )
-            current_code = generated.code
-    except Exception as e:
-        error_log.append(f"Initial generation failed: {str(e)}")
-        return False, None, error_log
-
-    # Retry loop
-    for attempt in range(max_retries):
-        logger.info(f"=== Attempt {attempt + 1}/{max_retries} ===")
-
-        # Save and execute code
-        try:
-            code_file = executor.save_code(current_code, f"attempt_{attempt + 1}.py")
-            result = executor.execute(code_file)
-
-            if result.success and result.output_file:
-                # Execution succeeded, validate presentation
-                logger.info("Execution succeeded, validating presentation")
-                validation = validate_presentation(result.output_file, task_content)
-
-                if validation.is_valid:
-                    logger.info("✓ Validation passed!")
-                    return True, result.output_file, error_log
-                else:
-                    # Validation failed
-                    error_msg = f"Validation failed: {', '.join(validation.issues)}"
-                    error_log.append(f"Attempt {attempt + 1}: {error_msg}")
-                    logger.warning(error_msg)
-
-                    if attempt < max_retries - 1:
-                        # Request fix
-                        logger.info("Requesting fix for validation issues")
-                        generated = generator.fix_code_after_validation(
-                            current_code,
-                            validation,
-                            task_content
-                        )
-                        current_code = generated.code
-            else:
-                # Execution failed
-                error_msg = result.error_message or "Unknown execution error"
-                error_log.append(f"Attempt {attempt + 1}: {error_msg}")
-                logger.error(error_msg)
-
-                if attempt < max_retries - 1:
-                    # Request fix
-                    logger.info("Requesting fix for execution error")
-                    generated = generator.fix_code_after_error(current_code, result)
-                    current_code = generated.code
-
-        except Exception as e:
-            error_msg = f"Unexpected error: {str(e)}"
-            error_log.append(f"Attempt {attempt + 1}: {error_msg}")
-            logger.error(error_msg)
-
-            if attempt >= max_retries - 1:
-                break
-
-    return False, None, error_log
-
-
 def main() -> int:
     """Main entry point."""
     args = parse_args()
@@ -282,33 +178,15 @@ def main() -> int:
         # Normalize output filename
         output_filename = normalize_output_filename(args.output)
 
-        chunks = split_into_chunks(task_content)
-        logger.info(
-            "Chunked generation: %d part(s) (1 title block + %d H2 slide(s))",
-            len(chunks),
-            len(chunks) - 1,
-        )
-        chunked = generator.generate_chunked_code(
-            chunks,
-            task_content,
-            style_content,
-            args.lang,
-            output_filename,
-        )
-        initial_code = chunked.code
-        initial_explanation = chunked.explanation
-
-        # Execute with retry
-        success, output_file, error_log = execute_with_retry(
-            task_content,
-            style_content,
-            args.lang,
-            output_filename,
-            generator,
-            executor,
-            config.max_retries,
-            initial_code=initial_code,
-            initial_explanation=initial_explanation,
+        success, output_file, error_log = run_incremental_pipeline(
+            task_content=task_content,
+            style_content=style_content,
+            language=args.lang,
+            output_filename=output_filename,
+            generator=generator,
+            executor=executor,
+            config=config,
+            max_retries=config.max_retries,
         )
 
         # Report results

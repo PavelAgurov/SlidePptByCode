@@ -5,8 +5,186 @@ import re
 from pathlib import Path
 from pptx import Presentation
 from .models import ValidationResult
+from .task_chunker import TaskChunk
 
 logger = logging.getLogger(__name__)
+
+
+def slide_text_digest(slide) -> str:
+    """Compact text fingerprint for a slide (title + text shapes)."""
+    parts: list[str] = []
+    try:
+        if slide.shapes.title and slide.shapes.title.text:
+            parts.append(slide.shapes.title.text.strip())
+    except Exception:
+        pass
+    for shape in slide.shapes:
+        try:
+            if hasattr(shape, "text_frame") and shape.has_text_frame:
+                t = shape.text_frame.text.strip()
+                if t:
+                    parts.append(t[:240])
+        except Exception:
+            continue
+    return (" | ".join(parts))[:800]
+
+
+def prefix_slide_digests(pptx_path: Path, num_slides: int) -> list[str]:
+    """Return ``slide_text_digest`` for slides ``0 .. num_slides-1``."""
+    prs = Presentation(str(pptx_path))
+    n = min(num_slides, len(prs.slides))
+    return [slide_text_digest(prs.slides[i]) for i in range(n)]
+
+
+def validate_incremental_h1_deck(
+    deck_path: Path,
+    shared_py_path: Path,
+    _deck_title: str,
+) -> ValidationResult:
+    """
+    Validate deck after H1: file ok, ``shared.py`` exists, at least one slide with content.
+
+    ``_deck_title`` is kept for API symmetry / future stricter checks (e.g. title on slide 1).
+    """
+    issues: list[str] = []
+    if not deck_path.exists():
+        return ValidationResult(
+            valid=False,
+            slide_count=0,
+            has_titles=False,
+            issues=["Deck file does not exist"],
+        )
+    if not shared_py_path.exists():
+        issues.append(f"shared.py not found at {shared_py_path}")
+    elif shared_py_path.stat().st_size == 0:
+        issues.append("shared.py is empty")
+
+    try:
+        prs = Presentation(str(deck_path))
+        slide_count = len(prs.slides)
+        if slide_count < 1:
+            issues.append("Deck has no slides after H1")
+        else:
+            digest0 = slide_text_digest(prs.slides[0])
+            if not digest0.strip():
+                issues.append("First slide has no readable text/content after H1")
+
+        has_titles = slide_count >= 1 and not any(
+            "no readable" in x for x in issues
+        )
+        valid = len(issues) == 0
+        return ValidationResult(
+            valid=valid,
+            slide_count=slide_count,
+            expected_slide_count=None,
+            has_titles=has_titles,
+            issues=issues,
+        )
+    except Exception as e:
+        return ValidationResult(
+            valid=False,
+            slide_count=0,
+            has_titles=False,
+            issues=[f"Error opening deck after H1: {e}"],
+        )
+
+
+def validate_scratch_append(
+    scratch_path: Path,
+    baseline_slide_count: int,
+    _h2_chunk: TaskChunk,
+) -> ValidationResult:
+    """After slide script on scratch: slide count +1 and new slide has content."""
+    issues: list[str] = []
+    if not scratch_path.exists():
+        return ValidationResult(
+            valid=False,
+            slide_count=0,
+            has_titles=False,
+            issues=["Scratch pptx does not exist"],
+        )
+    try:
+        prs = Presentation(str(scratch_path))
+        slide_count = len(prs.slides)
+        expected = baseline_slide_count + 1
+        if slide_count != expected:
+            issues.append(
+                f"Scratch slide count expected {expected} (baseline {baseline_slide_count}+1), "
+                f"got {slide_count}"
+            )
+        if slide_count > 0:
+            last = slide_text_digest(prs.slides[-1])
+            if not last.strip():
+                issues.append("Appended scratch slide has no readable text/content")
+        valid = len(issues) == 0
+        return ValidationResult(
+            valid=valid,
+            slide_count=slide_count,
+            expected_slide_count=expected,
+            has_titles=slide_count > 0,
+            issues=issues,
+        )
+    except Exception as e:
+        return ValidationResult(
+            valid=False,
+            slide_count=0,
+            has_titles=False,
+            issues=[f"Error validating scratch: {e}"],
+        )
+
+
+def validate_deck_after_append(
+    deck_path: Path,
+    previous_slide_count: int,
+    prefix_digests_before: list[str],
+    _h2_chunk: TaskChunk,
+) -> ValidationResult:
+    """
+    After appending one slide to deck: count +1, prefix digests unchanged, new slide ok.
+    """
+    issues: list[str] = []
+    if not deck_path.exists():
+        return ValidationResult(
+            valid=False,
+            slide_count=0,
+            has_titles=False,
+            issues=["Deck file does not exist"],
+        )
+    try:
+        prs = Presentation(str(deck_path))
+        slide_count = len(prs.slides)
+        expected = previous_slide_count + 1
+        if slide_count != expected:
+            issues.append(
+                f"Deck slide count expected {expected} (was {previous_slide_count}+1), "
+                f"got {slide_count}"
+            )
+        # Prefix: existing slides must be unchanged (digest match)
+        if previous_slide_count > 0:
+            after_prefix = prefix_slide_digests(deck_path, previous_slide_count)
+            if after_prefix != prefix_digests_before:
+                issues.append(
+                    "Deck prefix slides changed (append-only violation or corrupted deck)"
+                )
+        if slide_count > 0:
+            last = slide_text_digest(prs.slides[-1])
+            if not last.strip():
+                issues.append("New deck slide has no readable text/content")
+        valid = len(issues) == 0
+        return ValidationResult(
+            valid=valid,
+            slide_count=slide_count,
+            expected_slide_count=expected,
+            has_titles=slide_count > 0,
+            issues=issues,
+        )
+    except Exception as e:
+        return ValidationResult(
+            valid=False,
+            slide_count=0,
+            has_titles=False,
+            issues=[f"Error validating deck after append: {e}"],
+        )
 
 
 def parse_expected_slide_count(task_content: str) -> int:
@@ -124,8 +302,9 @@ def validate_presentation(
                         has_other_content = True
                         break
                     # Check for text box with content
-                    if hasattr(shape, 'text_frame'):
-                        text = shape.text_frame.text.strip()
+                    tf = getattr(shape, "text_frame", None)
+                    if tf is not None:
+                        text = tf.text.strip()
                         if text:
                             has_other_content = True
                             break

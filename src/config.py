@@ -1,6 +1,5 @@
 """Configuration management using pydantic-settings."""
 
-import os
 from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -20,6 +19,9 @@ class Settings(BaseSettings):
     model_id: str = "gpt-4.1"
     base_url: str = "https://openrouter.ai/api/v1"
     temperature: float = 0
+    # Cap completion budget so providers (e.g. OpenRouter) do not default to very large
+    # max_tokens, which can fail with 402 when credits only cover a smaller reservation.
+    llm_max_tokens: int = 16_384
 
     # Execution Configuration
     max_retries: int = 3
@@ -40,4 +42,5 @@ class Settings(BaseSettings):
 
 def load_settings() -> Settings:
     """Load and return application settings."""
-    return Settings()
+    # Fields such as ``openrouter_api_key`` are populated from env / ``.env`` via pydantic-settings.
+    return Settings()  # type: ignore[call-arg]

@@ -99,12 +99,19 @@ class CodeExecutor:
         logger.info(f"Saved code to {code_path}")
         return code_path
 
-    def execute(self, code_file: Path) -> CodeExecutionResult:
+    def execute(
+        self,
+        code_file: Path,
+        *,
+        expected_output_pptx: Path | None = None,
+    ) -> CodeExecutionResult:
         """
         Execute Python code file in subprocess.
 
         Args:
             code_file: Path to Python file to execute
+            expected_output_pptx: If set and the process exits 0, treat this path as
+                the output deck when it exists (incremental pipeline; no stdout parsing).
 
         Returns:
             CodeExecutionResult with execution status and details
@@ -122,11 +129,35 @@ class CodeExecutor:
                 cwd=str(self.project_root),
                 capture_output=True,
                 text=True,
-                timeout=self.execution_timeout
+                timeout=self.execution_timeout,
+                check=False,
             )
 
             # Check return code
             if result.returncode == 0:
+                if expected_output_pptx is not None:
+                    exp = expected_output_pptx.resolve()
+                    if exp.exists():
+                        logger.info(
+                            "Code executed successfully, using expected output: %s",
+                            exp,
+                        )
+                        return CodeExecutionResult(
+                            success=True,
+                            output_file=exp,
+                            stdout=result.stdout,
+                            stderr=result.stderr,
+                        )
+                    logger.warning(
+                        "Process exited 0 but expected pptx missing: %s", exp
+                    )
+                    return CodeExecutionResult(
+                        success=False,
+                        error_message=f"Expected output not found: {exp}",
+                        stdout=result.stdout,
+                        stderr=result.stderr,
+                    )
+
                 # Try to extract output path from stdout (code prints "Presentation saved to <path>")
                 output_file = self._extract_output_path_from_stdout(result.stdout)
 

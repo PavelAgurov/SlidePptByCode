@@ -1,14 +1,18 @@
 """OpenAI client wrapper for OpenRouter API."""
 
 import logging
-from typing import TypeVar, Type
+from collections.abc import Iterable
+from typing import Any, TypeVar, cast
+
 from openai import OpenAI
+from openai.types.chat import ChatCompletionMessageParam
 from pydantic import BaseModel
+
 from .config import Settings
 
 logger = logging.getLogger(__name__)
 
-T = TypeVar('T', bound=BaseModel)
+T = TypeVar("T", bound=BaseModel)
 
 
 class LLMClient:
@@ -22,12 +26,17 @@ class LLMClient:
         )
         self.model_id = config.model_id
         self.temperature = config.temperature
-        logger.info(f"Initialized LLM client with model: {self.model_id}")
+        self.max_tokens = config.llm_max_tokens
+        logger.info(
+            "Initialized LLM client with model: %s, max_tokens=%s",
+            self.model_id,
+            self.max_tokens,
+        )
 
     def generate_structured(
         self,
-        messages: list[dict],
-        response_format: Type[T]
+        messages: list[dict[str, Any]],
+        response_format: type[T],
     ) -> T:
         """
         Generate structured output using Pydantic model.
@@ -47,13 +56,19 @@ class LLMClient:
         try:
             response = self.client.beta.chat.completions.parse(
                 model=self.model_id,
-                messages=messages,
+                messages=cast(
+                    Iterable[ChatCompletionMessageParam],
+                    messages,
+                ),
                 response_format=response_format,
-                temperature=self.temperature
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
             )
 
             result = response.choices[0].message.parsed
             logger.debug(f"Received structured response: {type(result).__name__}")
+            if result is None:
+                raise RuntimeError("LLM returned no parsed structured output")
             return result
 
         except Exception as e:

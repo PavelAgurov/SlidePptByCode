@@ -1,18 +1,27 @@
 """Code generation and error fixing using LLM."""
 
 import logging
+from typing import Any
+
 from .llm_client import LLMClient
 from .models import (
     ChunkedSectionGeneratedCode,
     CodeExecutionResult,
     GeneratedCode,
+    IncrementalLlmScriptCode,
     ValidationResult,
 )
 from .prompts import (
     SYSTEM_PROMPT,
+    SYSTEM_PROMPT_INCREMENTAL_H1,
+    SYSTEM_PROMPT_INCREMENTAL_H2,
     format_chunk_h2_slide_user_message,
     format_chunk_title_deck_user_message,
     format_error_fix_prompt,
+    format_incremental_h1_user_message,
+    format_incremental_h1_validation_fix_prompt,
+    format_incremental_h2_user_message,
+    format_incremental_h2_validation_fix_prompt,
     format_validation_fix_prompt,
 )
 from .task_chunker import TaskChunk, extract_deck_title, section_function_name
@@ -21,13 +30,22 @@ from .code_merger import merge_chunked_modules
 logger = logging.getLogger(__name__)
 
 
+def _incremental_raw_to_generated(raw: IncrementalLlmScriptCode) -> GeneratedCode:
+    """Build ``GeneratedCode`` without re-running import validators (incremental LLM output)."""
+    return GeneratedCode.model_construct(
+        code=raw.code.strip(),
+        explanation=raw.explanation,
+        expected_output_filename=raw.expected_output_filename,
+    )
+
+
 class CodeGenerator:
     """Generates and fixes Python code using LLM."""
 
     def __init__(self, llm_client: LLMClient):
         """Initialize code generator with LLM client."""
         self.llm_client = llm_client
-        self.conversation_history: list[dict] = []
+        self.conversation_history: list[dict[str, Any]] = []
         self.style_content: str | None = None
 
     def generate_initial_code(self, task_content: str, style_content: str | None = None, language: str | None = None, output_filename: str | None = None) -> GeneratedCode:
@@ -185,7 +203,9 @@ class CodeGenerator:
     def fix_code_after_error(
         self,
         original_code: str,
-        error_result: CodeExecutionResult
+        error_result: CodeExecutionResult,
+        *,
+        incremental: bool = False,
     ) -> GeneratedCode:
         """
         Fix code after execution error.
@@ -193,6 +213,10 @@ class CodeGenerator:
         Args:
             original_code: The code that failed
             error_result: Execution result with error details
+
+        Args:
+            incremental: If True, parse LLM output as ``IncrementalLlmScriptCode`` (no import
+                guard on parse); still returned as ``GeneratedCode`` via ``model_construct``.
 
         Returns:
             GeneratedCode with fixed code
@@ -214,11 +238,18 @@ class CodeGenerator:
             "content": error_prompt
         })
 
-        # Get fixed code
-        result = self.llm_client.generate_structured(
-            messages=self.conversation_history,
-            response_format=GeneratedCode
-        )
+        # Get fixed code (separate parse types so Pyright narrows correctly)
+        if incremental:
+            raw_inc = self.llm_client.generate_structured(
+                messages=self.conversation_history,
+                response_format=IncrementalLlmScriptCode,
+            )
+            result = _incremental_raw_to_generated(raw_inc)
+        else:
+            result = self.llm_client.generate_structured(
+                messages=self.conversation_history,
+                response_format=GeneratedCode,
+            )
 
         # Add to history
         self.conversation_history.append({
@@ -277,4 +308,134 @@ class CodeGenerator:
         })
 
         logger.info("Code fixed after validation")
+        return result
+
+    def generate_incremental_h1(
+        self,
+        preamble_markdown: str,
+        deck_title: str,
+        style_content: str | None = None,
+        language: str | None = None,
+    ) -> GeneratedCode:
+        """Generate H1 script: fill deck stub and write ``shared.py``."""
+        logger.info("Incremental H1 generation")
+        self.style_content = style_content
+        user = format_incremental_h1_user_message(
+            preamble_markdown=preamble_markdown,
+            deck_title=deck_title,
+            style_content=style_content,
+            language=language,
+        )
+        self.conversation_history = [
+            {"role": "system", "content": SYSTEM_PROMPT_INCREMENTAL_H1},
+            {"role": "user", "content": user},
+        ]
+        raw = self.llm_client.generate_structured(
+            messages=self.conversation_history,
+            response_format=IncrementalLlmScriptCode,
+        )
+        result = _incremental_raw_to_generated(raw)
+        self.conversation_history.append(
+            {
+                "role": "assistant",
+                "content": f"Code:\n{result.code}\n\nExplanation: {result.explanation}",
+            }
+        )
+        return result
+
+    def fix_incremental_h1_validation(
+        self,
+        original_code: str,
+        issues: list[str],
+        preamble_markdown: str,
+    ) -> GeneratedCode:
+        """Fix H1 script after incremental validation failure."""
+        logger.info("Fixing incremental H1 after validation: %s", issues)
+        prompt = format_incremental_h1_validation_fix_prompt(
+            original_code=original_code,
+            issues=issues,
+            preamble_markdown=preamble_markdown,
+        )
+        self.conversation_history.append({"role": "user", "content": prompt})
+        raw = self.llm_client.generate_structured(
+            messages=self.conversation_history,
+            response_format=IncrementalLlmScriptCode,
+        )
+        result = _incremental_raw_to_generated(raw)
+        self.conversation_history.append(
+            {
+                "role": "assistant",
+                "content": f"Fixed code:\n{result.code}\n\nExplanation: {result.explanation}",
+            }
+        )
+        return result
+
+    def generate_incremental_slide(
+        self,
+        section_markdown: str,
+        deck_title: str,
+        section_ordinal: int,
+        num_h2_slides: int,
+        style_content: str | None = None,
+        language: str | None = None,
+    ) -> GeneratedCode:
+        """Generate one H2 slide-append script (fresh conversation)."""
+        logger.info(
+            "Incremental H2 slide generation (%d/%d)",
+            section_ordinal,
+            num_h2_slides,
+        )
+        self.style_content = style_content
+        user = format_incremental_h2_user_message(
+            section_markdown=section_markdown,
+            deck_title=deck_title,
+            section_ordinal=section_ordinal,
+            num_h2_slides=num_h2_slides,
+            style_content=style_content,
+            language=language,
+        )
+        self.conversation_history = [
+            {"role": "system", "content": SYSTEM_PROMPT_INCREMENTAL_H2},
+            {"role": "user", "content": user},
+        ]
+        raw = self.llm_client.generate_structured(
+            messages=self.conversation_history,
+            response_format=IncrementalLlmScriptCode,
+        )
+        result = _incremental_raw_to_generated(raw)
+        self.conversation_history.append(
+            {
+                "role": "assistant",
+                "content": f"Code:\n{result.code}\n\nExplanation: {result.explanation}",
+            }
+        )
+        return result
+
+    def fix_incremental_h2_validation(
+        self,
+        original_code: str,
+        issues: list[str],
+        deck_title: str,
+        section_markdown: str,
+    ) -> GeneratedCode:
+        """Fix one H2 slide script after incremental validation failure."""
+        logger.info("Fixing incremental H2 after validation: %s", issues)
+        prompt = format_incremental_h2_validation_fix_prompt(
+            original_code=original_code,
+            issues=issues,
+            deck_title=deck_title,
+            section_markdown=section_markdown,
+        )
+        self.conversation_history.append({"role": "user", "content": prompt})
+        raw = self.llm_client.generate_structured(
+            messages=self.conversation_history,
+            response_format=IncrementalLlmScriptCode,
+        )
+        result = _incremental_raw_to_generated(raw)
+        self.conversation_history.append(
+            {
+                "role": "assistant",
+                "content": f"Fixed code:\n{result.code}\n\nExplanation: {result.explanation}",
+            }
+        )
         return result

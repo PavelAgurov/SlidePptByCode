@@ -90,7 +90,9 @@ def test_validate_presentation_valid(tmp_path):
     # Add 3 slides with titles
     for i in range(3):
         slide = prs.slides.add_slide(prs.slide_layouts[1])
-        slide.shapes.title.text = f"Slide {i + 1}"
+        t = slide.shapes.title
+        assert t is not None
+        t.text = f"Slide {i + 1}"
 
     prs.save(str(pptx_path))
 
@@ -112,7 +114,9 @@ def test_validate_presentation_wrong_count(tmp_path):
     # Add 2 slides
     for i in range(2):
         slide = prs.slides.add_slide(prs.slide_layouts[1])
-        slide.shapes.title.text = f"Slide {i + 1}"
+        t = slide.shapes.title
+        assert t is not None
+        t.text = f"Slide {i + 1}"
 
     prs.save(str(pptx_path))
 
