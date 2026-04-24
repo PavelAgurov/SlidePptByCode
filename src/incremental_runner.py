@@ -15,6 +15,7 @@ from src.config import Settings
 from src.ppt_bootstrap import copy_deck_template, create_empty_ppt
 from src.script_inject import inject_h1_paths, inject_h2_slide_paths
 from src.task_chunker import extract_deck_title, split_into_chunks
+from src.shared_index import build_shared_index
 from src.validator import (
     prefix_slide_digests,
     validate_deck_after_append,
@@ -116,7 +117,7 @@ def run_incremental_pipeline(
     ).code
 
     for attempt in range(max_retries):
-        logger.info("H1 attempt %s/%s", attempt + 1, max_retries)
+        logger.debug("H1 attempt %s/%s (execute/validate loop)", attempt + 1, max_retries)
         script = inject_h1_paths(h1_code, deck_path, shared_path)
         code_file = executor.save_code(script, f"incremental_h1_{attempt + 1}.py")
         result = executor.execute(code_file, expected_output_pptx=deck_path)
@@ -149,9 +150,15 @@ def run_incremental_pipeline(
         error_log.append(f"Cannot hash shared.py: {e}")
         return False, None, error_log
 
+    try:
+        shared_index = build_shared_index(shared_path)
+    except (OSError, SyntaxError, UnicodeError) as e:
+        error_log.append(f"Cannot build shared.py symbol index: {e}")
+        return False, None, error_log
+
     # --- H2 slides ---
     for ord1, chunk in enumerate(h2_to_process, start=1):
-        logger.info("H2 slide %s/%s", ord1, num_h2_total)
+        logger.debug("H2 slide %s/%s (orchestrator step)", ord1, num_h2_total)
 
         deck_slide_count_before = len(Presentation(str(deck_path)).slides)
         prefix_before = prefix_slide_digests(deck_path, deck_slide_count_before)
@@ -163,6 +170,7 @@ def run_incremental_pipeline(
             num_h2_total,
             style_content,
             language,
+            shared_index=shared_index,
         ).code
 
         deck_backup = deck_path.with_suffix(deck_path.suffix + ".bak")
@@ -186,7 +194,10 @@ def run_incremental_pipeline(
                 if attempt >= max_retries - 1:
                     return False, None, error_log
                 slide_code = generator.fix_code_after_error(
-                    slide_code, scr_res, incremental=True
+                    slide_code,
+                    scr_res,
+                    incremental=True,
+                    shared_index=shared_index,
                 ).code
                 continue
 
@@ -199,7 +210,11 @@ def run_incremental_pipeline(
                 if attempt >= max_retries - 1:
                     return False, None, error_log
                 slide_code = generator.fix_incremental_h2_validation(
-                    slide_code, vs.issues, deck_title, chunk.body
+                    slide_code,
+                    vs.issues,
+                    deck_title,
+                    chunk.body,
+                    shared_index=shared_index,
                 ).code
                 continue
 
@@ -218,7 +233,10 @@ def run_incremental_pipeline(
                 if attempt >= max_retries - 1:
                     return False, None, error_log
                 slide_code = generator.fix_code_after_error(
-                    slide_code, deck_res, incremental=True
+                    slide_code,
+                    deck_res,
+                    incremental=True,
+                    shared_index=shared_index,
                 ).code
                 continue
 
@@ -234,7 +252,11 @@ def run_incremental_pipeline(
                 if attempt >= max_retries - 1:
                     return False, None, error_log
                 slide_code = generator.fix_incremental_h2_validation(
-                    slide_code, vd.issues, deck_title, chunk.body
+                    slide_code,
+                    vd.issues,
+                    deck_title,
+                    chunk.body,
+                    shared_index=shared_index,
                 ).code
                 continue
 
@@ -251,6 +273,7 @@ def run_incremental_pipeline(
                         ["shared.py must not be modified"],
                         deck_title,
                         chunk.body,
+                        shared_index=shared_index,
                     ).code
                     continue
             except OSError as e:

@@ -9,7 +9,13 @@ from src.models import GeneratedCode, CodeExecutionResult, ValidationResult
 @pytest.fixture
 def mock_llm_client() -> Mock:
     """Create mock LLM client."""
-    return Mock()
+    m = Mock()
+
+    def _tools_return(*_a: object, **_k: object) -> object:
+        return m.generate_structured_with_snippet_tools.return_value
+
+    m.generate_structured_with_snippet_tools.side_effect = _tools_return
+    return m
 
 
 @pytest.fixture
@@ -26,14 +32,14 @@ def test_generate_initial_code(generator: CodeGenerator, mock_llm_client: Mock) 
         explanation="Creates a presentation",
         expected_output_filename="test.pptx"
     )
-    mock_llm_client.generate_structured.return_value = mock_response
+    mock_llm_client.generate_structured_with_snippet_tools.return_value = mock_response
 
     # Generate code
     result = generator.generate_initial_code("Create a simple presentation")
 
     assert result.code == mock_response.code
     assert len(generator.conversation_history) == 3  # system + user + assistant
-    mock_llm_client.generate_structured.assert_called_once()
+    mock_llm_client.generate_structured_with_snippet_tools.assert_called_once()
 
 
 def test_generate_initial_code_with_style(generator: CodeGenerator, mock_llm_client: Mock) -> None:
@@ -44,7 +50,7 @@ def test_generate_initial_code_with_style(generator: CodeGenerator, mock_llm_cli
         explanation="Creates a styled presentation",
         expected_output_filename="test.pptx"
     )
-    mock_llm_client.generate_structured.return_value = mock_response
+    mock_llm_client.generate_structured_with_snippet_tools.return_value = mock_response
 
     # Generate code with style
     style_content = "Use blue colors and bold fonts"
@@ -58,7 +64,7 @@ def test_generate_initial_code_with_style(generator: CodeGenerator, mock_llm_cli
     assert "STYLE GUIDELINES" in user_message
     assert "Use blue colors" in user_message
     assert len(generator.conversation_history) == 3
-    mock_llm_client.generate_structured.assert_called_once()
+    mock_llm_client.generate_structured_with_snippet_tools.assert_called_once()
 
 
 def test_fix_code_after_error(generator: CodeGenerator, mock_llm_client: Mock) -> None:
@@ -75,7 +81,7 @@ def test_fix_code_after_error(generator: CodeGenerator, mock_llm_client: Mock) -
         explanation="Fixed the error",
         expected_output_filename="test.pptx"
     )
-    mock_llm_client.generate_structured.return_value = mock_response
+    mock_llm_client.generate_structured_with_snippet_tools.return_value = mock_response
 
     # Create error result
     error_result: CodeExecutionResult = CodeExecutionResult(
@@ -90,7 +96,45 @@ def test_fix_code_after_error(generator: CodeGenerator, mock_llm_client: Mock) -
 
     assert result.code == mock_response.code
     assert len(generator.conversation_history) == 4  # added user request + assistant response
-    mock_llm_client.generate_structured.assert_called_once()
+    mock_llm_client.generate_structured_with_snippet_tools.assert_called_once()
+
+
+def test_fix_code_after_error_incremental_compacts_history(
+    generator: CodeGenerator, mock_llm_client: Mock
+) -> None:
+    """Incremental execution error uses compact history and shared index in prompt."""
+    from src.models import IncrementalLlmScriptCode
+
+    generator.conversation_history = [
+        {"role": "system", "content": "SYS_H2"},
+        {"role": "user", "content": "TASK_BODY"},
+        {"role": "assistant", "content": "Code:\nbad\n\nExplanation: x"},
+    ]
+    mock_llm_client.generate_structured_with_snippet_tools.return_value = (
+        IncrementalLlmScriptCode(
+            code="from pptx import Presentation\nfixed",
+            explanation="ok",
+        )
+    )
+    err = CodeExecutionResult(
+        success=False,
+        error_message="boom",
+        traceback="Traceback...",
+        stderr="e",
+    )
+    generator.fix_code_after_error(
+        "bad code",
+        err,
+        incremental=True,
+        shared_index="ELF_GREEN = ...",
+    )
+    assert len(generator.conversation_history) == 5
+    last_user = generator.conversation_history[3]["content"]
+    assert "EXECUTION FAILED" in last_user
+    assert "Traceback" in last_user
+    assert "ELF_GREEN" in last_user
+    assert "bad code" in last_user
+    mock_llm_client.generate_structured_with_snippet_tools.assert_called_once()
 
 
 def test_fix_code_after_validation(generator: CodeGenerator, mock_llm_client: Mock) -> None:
@@ -105,7 +149,7 @@ def test_fix_code_after_validation(generator: CodeGenerator, mock_llm_client: Mo
         explanation="Fixed validation issues",
         expected_output_filename="test.pptx"
     )
-    mock_llm_client.generate_structured.return_value = mock_response
+    mock_llm_client.generate_structured_with_snippet_tools.return_value = mock_response
 
     # Create validation result
     validation_result = ValidationResult(
@@ -125,4 +169,4 @@ def test_fix_code_after_validation(generator: CodeGenerator, mock_llm_client: Mo
 
     assert result.code == mock_response.code
     assert len(generator.conversation_history) == 3
-    mock_llm_client.generate_structured.assert_called_once()
+    mock_llm_client.generate_structured_with_snippet_tools.assert_called_once()

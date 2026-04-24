@@ -7,6 +7,7 @@ import pytest
 
 from src.llm_client import LLMClient, SessionTokenUsage
 from src.models import GeneratedCode
+from src.snippets import SnippetCallCache
 
 
 def _make_response(
@@ -97,3 +98,64 @@ def test_session_token_usage_missing_total_falls_back(mock_openai_class: MagicMo
     u = client.session_token_usage()
     assert u.total_tokens == 100
     assert u.cached_tokens == 0
+
+
+@patch("src.llm_client.OpenAI")
+def test_generate_structured_with_snippet_tools_tool_then_parsed(
+    mock_openai_class: MagicMock, mock_config: MagicMock
+) -> None:
+    """First parse returns tool_calls; second returns structured output."""
+    mock_api = MagicMock()
+    mock_openai_class.return_value = mock_api
+
+    parsed = GeneratedCode(
+        code="from pptx import Presentation\nok\n",
+        explanation="done",
+        expected_output_filename="out.pptx",
+    )
+    tool_fn = SimpleNamespace(
+        name="get_code_snippet",
+        arguments='{"snippet_id":"title_slide"}',
+    )
+    tool_call = SimpleNamespace(
+        id="call_abc",
+        type="function",
+        function=tool_fn,
+    )
+    msg_tool = SimpleNamespace(parsed=None, content=None, tool_calls=[tool_call])
+    msg_done = SimpleNamespace(parsed=parsed, content=None, tool_calls=None)
+
+    usage1 = SimpleNamespace(
+        prompt_tokens=10,
+        completion_tokens=5,
+        total_tokens=15,
+        prompt_tokens_details=None,
+    )
+    usage2 = SimpleNamespace(
+        prompt_tokens=20,
+        completion_tokens=10,
+        total_tokens=30,
+        prompt_tokens_details=None,
+    )
+    mock_api.beta.chat.completions.parse.side_effect = [
+        SimpleNamespace(
+            choices=[SimpleNamespace(message=msg_tool)],
+            usage=usage1,
+        ),
+        SimpleNamespace(
+            choices=[SimpleNamespace(message=msg_done)],
+            usage=usage2,
+        ),
+    ]
+
+    client = LLMClient(mock_config)
+    out = client.generate_structured_with_snippet_tools(
+        [{"role": "user", "content": "hi"}],
+        GeneratedCode,
+        SnippetCallCache(),
+    )
+    assert out == parsed
+    assert mock_api.beta.chat.completions.parse.call_count == 2
+    u = client.session_token_usage()
+    assert u.prompt_tokens == 30
+    assert u.completion_tokens == 15

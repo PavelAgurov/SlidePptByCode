@@ -4,6 +4,7 @@ import logging
 from typing import Any
 
 from .llm_client import LLMClient
+from .snippets import SnippetCallCache
 from .models import (
     ChunkedSectionGeneratedCode,
     CodeExecutionResult,
@@ -18,6 +19,7 @@ from .prompts import (
     format_chunk_h2_slide_user_message,
     format_chunk_title_deck_user_message,
     format_error_fix_prompt,
+    format_incremental_execution_error_fix_prompt,
     format_incremental_h1_user_message,
     format_incremental_h1_validation_fix_prompt,
     format_incremental_h2_user_message,
@@ -47,6 +49,14 @@ class CodeGenerator:
         self.llm_client = llm_client
         self.conversation_history: list[dict[str, Any]] = []
         self.style_content: str | None = None
+
+    def _structured_with_snippets(self, messages: list[dict[str, Any]], response_format: type[Any]) -> Any:
+        """One LLM call (possibly multi-round tool use) with a fresh snippet cache."""
+        return self.llm_client.generate_structured_with_snippet_tools(
+            messages,
+            response_format,
+            SnippetCallCache(),
+        )
 
     def generate_initial_code(self, task_content: str, style_content: str | None = None, language: str | None = None, output_filename: str | None = None) -> GeneratedCode:
         """
@@ -90,10 +100,10 @@ class CodeGenerator:
             {"role": "user", "content": user_message}
         ]
 
-        # Get structured response
-        result = self.llm_client.generate_structured(
-            messages=self.conversation_history,
-            response_format=GeneratedCode
+        # Get structured response (may use get_code_snippet tool rounds)
+        result = self._structured_with_snippets(
+            self.conversation_history,
+            GeneratedCode,
         )
 
         # Add assistant response to history
@@ -155,7 +165,7 @@ class CodeGenerator:
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": preamble_user},
         ]
-        part0 = self.llm_client.generate_structured(messages0, GeneratedCode)
+        part0 = self._structured_with_snippets(messages0, GeneratedCode)
         logger.info("Chunked part 0 (title deck) received")
 
         section_codes: list[str] = []
@@ -177,7 +187,7 @@ class CodeGenerator:
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": section_user},
             ]
-            sec = self.llm_client.generate_structured(
+            sec = self._structured_with_snippets(
                 messages_i, ChunkedSectionGeneratedCode
             )
             section_codes.append(sec.code)
@@ -206,6 +216,7 @@ class CodeGenerator:
         error_result: CodeExecutionResult,
         *,
         incremental: bool = False,
+        shared_index: str | None = None,
     ) -> GeneratedCode:
         """
         Fix code after execution error.
@@ -223,32 +234,50 @@ class CodeGenerator:
         """
         logger.info(f"Fixing code after error: {error_result.error_message}")
 
-        # Format error fix prompt
-        error_prompt = format_error_fix_prompt(
-            original_code=original_code,
-            error_message=error_result.error_message or "Unknown error",
-            traceback=error_result.traceback or "(no traceback)",
-            stdout=error_result.stdout or "",
-            stderr=error_result.stderr or ""
-        )
-
-        # Add to conversation
-        self.conversation_history.append({
-            "role": "user",
-            "content": error_prompt
-        })
+        if incremental and len(self.conversation_history) >= 2:
+            sys_msg = self.conversation_history[0]["content"]
+            task_user = self.conversation_history[1]["content"]
+            error_prompt = format_incremental_execution_error_fix_prompt(
+                original_code=original_code,
+                error_message=error_result.error_message or "Unknown error",
+                traceback=error_result.traceback or "(no traceback)",
+                stdout=error_result.stdout or "",
+                stderr=error_result.stderr or "",
+                shared_index=shared_index,
+            )
+            self.conversation_history = [
+                {"role": "system", "content": sys_msg},
+                {"role": "user", "content": task_user},
+                {
+                    "role": "assistant",
+                    "content": (
+                        "A previous script attempt failed; the next user message has "
+                        "the traceback and the script to fix."
+                    ),
+                },
+                {"role": "user", "content": error_prompt},
+            ]
+        else:
+            error_prompt = format_error_fix_prompt(
+                original_code=original_code,
+                error_message=error_result.error_message or "Unknown error",
+                traceback=error_result.traceback or "(no traceback)",
+                stdout=error_result.stdout or "",
+                stderr=error_result.stderr or "",
+            )
+            self.conversation_history.append({"role": "user", "content": error_prompt})
 
         # Get fixed code (separate parse types so Pyright narrows correctly)
         if incremental:
-            raw_inc = self.llm_client.generate_structured(
-                messages=self.conversation_history,
-                response_format=IncrementalLlmScriptCode,
+            raw_inc = self._structured_with_snippets(
+                self.conversation_history,
+                IncrementalLlmScriptCode,
             )
             result = _incremental_raw_to_generated(raw_inc)
         else:
-            result = self.llm_client.generate_structured(
-                messages=self.conversation_history,
-                response_format=GeneratedCode,
+            result = self._structured_with_snippets(
+                self.conversation_history,
+                GeneratedCode,
             )
 
         # Add to history
@@ -296,9 +325,9 @@ class CodeGenerator:
         })
 
         # Get fixed code
-        result = self.llm_client.generate_structured(
-            messages=self.conversation_history,
-            response_format=GeneratedCode
+        result = self._structured_with_snippets(
+            self.conversation_history,
+            GeneratedCode,
         )
 
         # Add to history
@@ -319,7 +348,11 @@ class CodeGenerator:
         deck_from_template: bool = False,
     ) -> GeneratedCode:
         """Generate H1 script: fill deck stub and write ``shared.py``."""
-        logger.info("Incremental H1 generation")
+        logger.info(
+            "=== Incremental H1: title deck + shared.py | title=%r ===",
+            deck_title,
+            extra={"color_event": "gen_section"},
+        )
         self.style_content = style_content
         user = format_incremental_h1_user_message(
             preamble_markdown=preamble_markdown,
@@ -332,9 +365,9 @@ class CodeGenerator:
             {"role": "system", "content": SYSTEM_PROMPT_INCREMENTAL_H1},
             {"role": "user", "content": user},
         ]
-        raw = self.llm_client.generate_structured(
-            messages=self.conversation_history,
-            response_format=IncrementalLlmScriptCode,
+        raw = self._structured_with_snippets(
+            self.conversation_history,
+            IncrementalLlmScriptCode,
         )
         result = _incremental_raw_to_generated(raw)
         self.conversation_history.append(
@@ -359,9 +392,9 @@ class CodeGenerator:
             preamble_markdown=preamble_markdown,
         )
         self.conversation_history.append({"role": "user", "content": prompt})
-        raw = self.llm_client.generate_structured(
-            messages=self.conversation_history,
-            response_format=IncrementalLlmScriptCode,
+        raw = self._structured_with_snippets(
+            self.conversation_history,
+            IncrementalLlmScriptCode,
         )
         result = _incremental_raw_to_generated(raw)
         self.conversation_history.append(
@@ -380,12 +413,15 @@ class CodeGenerator:
         num_h2_slides: int,
         style_content: str | None = None,
         language: str | None = None,
+        shared_index: str = "",
     ) -> GeneratedCode:
         """Generate one H2 slide-append script (fresh conversation)."""
         logger.info(
-            "Incremental H2 slide generation (%d/%d)",
+            "=== Incremental H2 slide %s/%s | deck=%r ===",
             section_ordinal,
             num_h2_slides,
+            deck_title,
+            extra={"color_event": "gen_section"},
         )
         self.style_content = style_content
         user = format_incremental_h2_user_message(
@@ -395,14 +431,15 @@ class CodeGenerator:
             num_h2_slides=num_h2_slides,
             style_content=style_content,
             language=language,
+            shared_index=shared_index,
         )
         self.conversation_history = [
             {"role": "system", "content": SYSTEM_PROMPT_INCREMENTAL_H2},
             {"role": "user", "content": user},
         ]
-        raw = self.llm_client.generate_structured(
-            messages=self.conversation_history,
-            response_format=IncrementalLlmScriptCode,
+        raw = self._structured_with_snippets(
+            self.conversation_history,
+            IncrementalLlmScriptCode,
         )
         result = _incremental_raw_to_generated(raw)
         self.conversation_history.append(
@@ -419,6 +456,8 @@ class CodeGenerator:
         issues: list[str],
         deck_title: str,
         section_markdown: str,
+        *,
+        shared_index: str = "",
     ) -> GeneratedCode:
         """Fix one H2 slide script after incremental validation failure."""
         logger.info("Fixing incremental H2 after validation: %s", issues)
@@ -427,11 +466,12 @@ class CodeGenerator:
             issues=issues,
             deck_title=deck_title,
             section_markdown=section_markdown,
+            shared_index=shared_index,
         )
         self.conversation_history.append({"role": "user", "content": prompt})
-        raw = self.llm_client.generate_structured(
-            messages=self.conversation_history,
-            response_format=IncrementalLlmScriptCode,
+        raw = self._structured_with_snippets(
+            self.conversation_history,
+            IncrementalLlmScriptCode,
         )
         result = _incremental_raw_to_generated(raw)
         self.conversation_history.append(

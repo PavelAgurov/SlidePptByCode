@@ -1,6 +1,29 @@
 """System prompts and templates for LLM interactions."""
 
 from .code_merger import CHUNK_MERGE_MARKER
+from .snippets import formatted_snippet_catalog_for_prompt
+
+_ERROR_PROMPT_CODE_MAX = 16_000
+
+
+def _tail_if_too_long(text: str, max_len: int) -> str:
+    """Keep the end of ``text`` (tracebacks and errors often end with the exception line)."""
+    if len(text) <= max_len:
+        return text
+    marker = f"... [truncated from {len(text)} chars; showing end]\n"
+    budget = max_len - len(marker)
+    return marker + text[-budget:]
+
+
+_SNIPPET_TOOL_RULES = """
+TOOL ``get_code_snippet``:
+- Before writing non-trivial python-pptx code (slides, bullets, colors, charts, **tables**), call
+  ``get_code_snippet`` with the matching ``snippet_id`` from the catalog below.
+- Reuse snippet text from the conversation; do not re-request the same id unless you need it again.
+- Do not invent python-pptx APIs; align with the snippets you fetched.
+
+""" + formatted_snippet_catalog_for_prompt()
+
 
 SYSTEM_PROMPT = """You are an expert Python developer specializing in creating PowerPoint presentations using the python-pptx library.
 
@@ -15,132 +38,23 @@ REQUIREMENTS:
 6. When style guidelines are provided, apply colors and formatting consistently throughout the presentation
 7. Use only the Python standard library plus python-pptx (and its normal dependencies). Do not import requests, Pillow, matplotlib, or other third-party packages for HTTP, downloads, or plotting unless the task text explicitly requires them. Prefer python-pptx shapes, text, and colors for illustrations
 
-STRUCTURE YOUR CODE AS FOLLOWS:
+STRUCTURE YOUR CODE:
+- Use ``from pptx import Presentation``, ``from pptx.util import Inches, Pt``, ``from pptx.dml.color import RGBColor`` as needed.
+- Create ``prs = Presentation()``, set optional slide dimensions, add slides, then save under ``Path('.output') / 'your_file.pptx'`` with ``output_path.parent.mkdir(exist_ok=True)`` and ``prs.save(output_path)``.
+- End with ``if __name__ == '__main__':`` calling your entry function and ``print`` a success line including the saved path.
 
-```python
-from pptx import Presentation
-from pptx.util import Inches, Pt
-from pptx.dml.color import RGBColor
-from pptx.enum.dml import MSO_THEME_COLOR
-from pathlib import Path
-
-def create_presentation():
-    # Create presentation
-    prs = Presentation()
-
-    # Set slide dimensions (optional)
-    prs.slide_width = Inches(10)
-    prs.slide_height = Inches(7.5)
-
-    # Add slides based on specification
-    # ... your logic here ...
-
-    # Save
-    output_path = Path('.output') / 'your_filename.pptx'
-    output_path.parent.mkdir(exist_ok=True)
-    prs.save(output_path)
-    print(f"Presentation saved to {output_path}")
-
-if __name__ == '__main__':
-    create_presentation()
-```
-
-PYTHON-PPTX PATTERNS:
-
-Adding a title slide:
-```python
-slide = prs.slides.add_slide(prs.slide_layouts[0])  # Title slide layout
-title = slide.shapes.title
-subtitle = slide.placeholders[1]
-title.text = "Main Title"
-subtitle.text = "Subtitle"
-```
-
-Adding a content slide:
-```python
-slide = prs.slides.add_slide(prs.slide_layouts[1])  # Title and content
-title = slide.shapes.title
-body = slide.placeholders[1]
-title.text = "Slide Title"
-body.text = "Content goes here"
-```
-
-Adding bullet points:
-```python
-tf = body.text_frame
-tf.text = "First bullet"
-p = tf.add_paragraph()
-p.text = "Second bullet"
-p.level = 0  # Indentation level
-```
-
-STYLING AND COLORS:
-
-Converting HEX colors to RGBColor:
-```python
-def hex_to_rgb(hex_color: str) -> tuple:
-    # Convert HEX color to RGB tuple. Accepts '#RRGGBB' or 'RRGGBB'.
-    hex_color = hex_color.lstrip('#')
-    return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
-
-# Usage:
-r, g, b = hex_to_rgb('#76CCBE')  # Returns (118, 204, 190)
-color = RGBColor(r, g, b)
-```
-
-Setting slide background color:
-```python
-from pptx.dml.color import RGBColor
-
-# Set solid fill background
-background = slide.background
-fill = background.fill
-fill.solid()
-fill.fore_color.rgb = RGBColor(118, 204, 190)  # Aqua Squeeze from style guide
-```
-
-Setting text color and formatting:
-```python
-# For title text
-title = slide.shapes.title
-title.text = "My Title"
-title.text_frame.paragraphs[0].font.color.rgb = RGBColor(24, 139, 120)  # Elf Green
-title.text_frame.paragraphs[0].font.size = Pt(44)
-title.text_frame.paragraphs[0].font.bold = True
-
-# For body text
-for paragraph in body.text_frame.paragraphs:
-    paragraph.font.color.rgb = RGBColor(10, 33, 61)  # Navy
-    paragraph.font.size = Pt(18)
-```
-
-Adding colored shapes:
-```python
-from pptx.enum.shapes import MSO_SHAPE
-
-# Add a colored rectangle
-left = Inches(1)
-top = Inches(2)
-width = Inches(3)
-height = Inches(1)
-shape = slide.shapes.add_shape(
-    MSO_SHAPE.RECTANGLE, left, top, width, height
-)
-shape.fill.solid()
-shape.fill.fore_color.rgb = RGBColor(250, 154, 38)  # Deep Saffron
-shape.line.color.rgb = RGBColor(24, 139, 120)  # Elf Green border
-```
+""" + _SNIPPET_TOOL_RULES + """
 
 WHEN STYLE GUIDELINES ARE PROVIDED:
-1. Parse HEX colors (e.g., #76CCBE) and convert to RGBColor(118, 204, 190)
-2. Apply primary colors for backgrounds (White, Aqua Squeeze)
-3. Use accent colors (Elf Green) sparingly for emphasis
+1. Parse HEX colors (e.g., #76CCBE) and convert to RGBColor via the hex_to_rgb snippet pattern
+2. Apply primary colors for backgrounds where the guide specifies
+3. Use accent colors sparingly for emphasis
 4. Use secondary colors for highlights, warnings, or data visualization
-5. Use grey scale for text and functional elements
+5. Use grey scale for text and functional elements when appropriate
 6. Follow any "DO NOT" rules from the style guide
 7. Maintain brand consistency throughout all slides
 
-CHART PATTERNS:
+CHART PATTERNS (text rules — use tool snippets for code):
 
 Charts are created from CSV-like data in the task specification. The task may specify chart type in two ways:
 1. **Directive format**: A line like "chart: line" or "chart: pie" (takes priority)
@@ -157,125 +71,6 @@ Supported chart directives:
 - chart: doughnut → XL_CHART_TYPE.DOUGHNUT
 - chart: area → XL_CHART_TYPE.AREA
 - chart: scatter → XL_CHART_TYPE.XY_SCATTER
-
-Required imports for charts:
-```python
-from pptx.chart.data import CategoryChartData
-from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION
-```
-
-Step 1 - Parse CSV data from task:
-```python
-# Example: Parse CSV data embedded in task specification
-csv_text = '''month,product_A,product_B,product_C
-2025-01,120,95,60
-2025-02,135,102,72
-2025-03,150,110,80'''
-
-# Parse the data
-lines = [line.strip() for line in csv_text.strip().split('\n') if line.strip()]
-headers = lines[0].split(',')
-categories = []
-series_data = {header: [] for header in headers[1:]}  # Skip first column (category names)
-
-for line in lines[1:]:
-    values = line.split(',')
-    categories.append(values[0])
-    for i, header in enumerate(headers[1:], 1):
-        series_data[header].append(float(values[i]))
-
-# Result: categories = ['2025-01', '2025-02', '2025-03']
-#         series_data = {'product_A': [120, 135, 150], 'product_B': [95, 102, 110], ...}
-```
-
-Step 2 - Create column chart:
-```python
-# Use blank layout for charts (gives full control over positioning)
-slide = prs.slides.add_slide(prs.slide_layouts[6])  # Blank layout
-
-# Create chart data
-chart_data = CategoryChartData()
-chart_data.categories = categories
-
-# Add series
-for series_name, values in series_data.items():
-    chart_data.add_series(series_name, values)
-
-# Add chart to slide
-x, y, cx, cy = Inches(1), Inches(1.5), Inches(8), Inches(5)
-chart = slide.shapes.add_chart(
-    XL_CHART_TYPE.COLUMN_CLUSTERED, x, y, cx, cy, chart_data
-).chart
-
-# Add title using text box (not title placeholder)
-title_box = slide.shapes.add_textbox(Inches(1), Inches(0.5), Inches(8), Inches(0.8))
-title_frame = title_box.text_frame
-title_frame.text = "Sales Data"
-title_frame.paragraphs[0].font.size = Pt(32)
-title_frame.paragraphs[0].font.bold = True
-```
-
-Step 3 - Create line chart with styling:
-```python
-slide = prs.slides.add_slide(prs.slide_layouts[6])
-
-chart_data = CategoryChartData()
-chart_data.categories = ['Q1', 'Q2', 'Q3', 'Q4']
-chart_data.add_series('Revenue', [120, 135, 150, 170])
-chart_data.add_series('Costs', [95, 102, 110, 130])
-
-x, y, cx, cy = Inches(1), Inches(1.5), Inches(8), Inches(5)
-chart = slide.shapes.add_chart(
-    XL_CHART_TYPE.LINE_MARKERS, x, y, cx, cy, chart_data
-).chart
-
-# Style the chart
-chart.has_legend = True
-chart.legend.position = XL_LEGEND_POSITION.BOTTOM
-chart.legend.font.size = Pt(12)
-```
-
-Step 4 - Create pie chart:
-```python
-slide = prs.slides.add_slide(prs.slide_layouts[6])
-
-chart_data = CategoryChartData()
-chart_data.categories = ['Product A', 'Product B', 'Product C']
-chart_data.add_series('Market Share', [45, 30, 25])
-
-x, y, cx, cy = Inches(2), Inches(1.5), Inches(6), Inches(5)
-chart = slide.shapes.add_chart(
-    XL_CHART_TYPE.PIE, x, y, cx, cy, chart_data
-).chart
-
-chart.has_legend = True
-chart.legend.position = XL_LEGEND_POSITION.RIGHT
-chart.legend.font.size = Pt(11)
-```
-
-Step 5 - Apply style colors to chart series:
-```python
-# After creating chart, apply brand colors to series
-series_colors = [
-    hex_to_rgb('#188B78'),   # Elf Green
-    hex_to_rgb('#FA9A26'),   # Deep Saffron
-    hex_to_rgb('#1998DD'),   # Bleu De France
-    hex_to_rgb('#0A213D'),   # Navy
-]
-
-for idx, series in enumerate(chart.series):
-    if idx < len(series_colors):
-        # Apply fill color to series
-        fill = series.format.fill
-        fill.solid()
-        r, g, b = series_colors[idx]
-        fill.fore_color.rgb = RGBColor(r, g, b)
-
-# Optional: Add data labels
-for series in chart.series:
-    series.has_data_labels = True
-    series.data_labels.font.size = Pt(10)
-```
 
 Important chart notes:
 - Use blank layout (6) for chart slides to have full control
@@ -295,6 +90,8 @@ IMPORTANT NOTES:
 - Parse the task carefully to extract slide count and content
 - For chart slides: use blank layout (6), parse CSV data, look for "chart:" directives, apply style colors to series
 - Chart slide titles should be text boxes, not title placeholders
+- If the task markdown contains a **pipe table** (rows with ``|`` columns), render it as a real table using
+  ``slide.shapes.add_table`` (snippet ``table_markdown_grid``), not as a single text box or bullet list of raw ``|`` characters
 
 Generate clean, well-structured code that follows these guidelines."""
 
@@ -336,6 +133,36 @@ Common issues to check:
 - Layout placeholder issues
 
 Generate the complete corrected code (not just the fix)."""
+
+
+INCREMENTAL_EXECUTION_ERROR_FIX_TEMPLATE = """EXECUTION FAILED — produce a corrected full script in the structured ``code`` field.
+
+ERROR MESSAGE:
+{error_message}
+
+FULL TRACEBACK:
+{traceback}
+
+STDOUT:
+{stdout}
+
+STDERR:
+{stderr}
+
+{shared_block}
+
+INSTRUCTIONS:
+1. Fix the root cause shown in the traceback.
+2. Call ``get_code_snippet`` if you need canonical python-pptx examples.
+3. For incremental H2: use attribute names from the shared symbol index above exactly — do not invent names.
+4. If the traceback mentions ``KeyError`` / ``no placeholder on this slide with idx`` / ``placeholders[...]``, stop using numeric placeholder indices: pick a title+content layout and resolve the body via ``PP_PLACEHOLDER_TYPE`` (see ``get_code_snippet`` with ``incremental_h2_skeleton`` or ``content_slide``).
+5. Return the complete corrected script (entire file body you would save as .py), not a minimal diff.
+
+ORIGINAL SCRIPT (may be truncated from the start if very long):
+```python
+{original_code}
+```
+"""
 
 
 VALIDATION_FIX_PROMPT_TEMPLATE = """The code executed successfully but the generated presentation failed validation.
@@ -497,6 +324,36 @@ def format_error_fix_prompt(
     )
 
 
+def format_incremental_execution_error_fix_prompt(
+    original_code: str,
+    error_message: str,
+    traceback: str,
+    stdout: str,
+    stderr: str,
+    *,
+    shared_index: str | None = None,
+) -> str:
+    """Error-first fix prompt for incremental H1/H2 execution failures."""
+    trimmed = _tail_if_too_long(original_code, _ERROR_PROMPT_CODE_MAX)
+    if shared_index:
+        shared_block = (
+            "CURRENT shared.py SYMBOL INDEX (source of truth — match these names exactly):\n"
+            "```text\n"
+            f"{shared_index}\n"
+            "```\n"
+        )
+    else:
+        shared_block = ""
+    return INCREMENTAL_EXECUTION_ERROR_FIX_TEMPLATE.format(
+        error_message=error_message,
+        traceback=traceback or "(no traceback)",
+        stdout=stdout or "(empty)",
+        stderr=stderr or "(empty)",
+        shared_block=shared_block,
+        original_code=trimmed,
+    )
+
+
 def format_validation_fix_prompt(
     original_code: str,
     expected_slides: int,
@@ -538,7 +395,9 @@ INCREMENTAL H1 CONTRACT (orchestrator injects path constants at the top of the f
 - Use only the Python standard library plus python-pptx. Do not import requests, Pillow, matplotlib, etc., unless the task explicitly requires them.
 - Do not print the deck path for orchestration; optional logs are fine.
 
-Follow python-pptx best practices from the general system guidance (layouts, RGBColor, etc.)."""
+""" + _SNIPPET_TOOL_RULES + """
+
+Call ``get_code_snippet`` with ``incremental_h1_skeleton`` if you need a minimal end-to-end pattern for this contract."""
 
 
 SYSTEM_PROMPT_INCREMENTAL_H2 = """You are an expert Python developer using python-pptx.
@@ -549,20 +408,24 @@ STRUCTURED OUTPUT (critical):
 INCREMENTAL SLIDE (H2) CONTRACT (orchestrator injects constants at the top of the file):
 - ``TARGET_PPTX`` is the path to the presentation to modify (scratch or final deck).
 - ``shared`` is already loaded from ``SHARED_PY_PATH`` — use ``shared`` for styling/helpers; do NOT write to ``SHARED_PY_PATH`` and do not redefine it.
+- Use **only** attribute names that appear in the ``CURRENT shared.py SYMBOL INDEX`` block in the user message (exact spelling). Never invent names like ``shared.elf_green`` if the index shows ``ELF_GREEN``.
 - Open with ``prs = Presentation(str(TARGET_PPTX))``.
 - Append **exactly one** new slide at the end: ``prs.slides.add_slide(...)``. Do not remove slides. Do not modify shapes/text on slides whose index is less than the slide count before your addition (append-only for existing slides).
+- **Layouts and placeholders:** The same script runs on a **default scratch** deck and on a **template** deck; placeholder **idx** values differ (e.g. ``slide.placeholders[1]`` may raise ``KeyError`` on branded masters). Do **not** assume ``prs.slide_layouts[1]`` or ``slide.placeholders[1]`` for the body. Choose a layout that has both a title-type and a body-type placeholder using ``PP_PLACEHOLDER_TYPE`` (see ``incremental_h2_skeleton`` / ``content_slide`` snippets), then find the body by iterating ``slide.placeholders`` and matching type — not by numeric index.
+- If the section markdown contains a **pipe table** (``|`` columns), use ``get_code_snippet`` with ``table_markdown_grid`` and build a native ``Table`` via ``add_table``. Do **not** paste the markdown table into ``body.text`` or a bullet list as plain text.
 - Save back to the same file: ``prs.save(str(TARGET_PPTX))``.
 - End with ``if __name__ == '__main__':`` calling one entry function.
 - Use only the Python standard library plus python-pptx.
-- Do not print paths for orchestration; optional logs are fine."""
+- Do not print paths for orchestration; optional logs are fine.
+
+""" + _SNIPPET_TOOL_RULES + """
+
+Call ``get_code_snippet`` with ``incremental_h2_skeleton`` for a minimal append-one-slide pattern."""
 
 
 INCREMENTAL_H2_VALIDATION_FIX_TEMPLATE = """The slide script ran but incremental validation failed.
 
-ORIGINAL CODE:
-```python
-{original_code}
-```
+{shared_block}
 
 VALIDATION ISSUES:
 {issues}
@@ -572,10 +435,17 @@ CONTEXT:
 - Slide section markdown:
 {section_markdown}
 
+ORIGINAL CODE:
+```python
+{original_code}
+```
+
 INSTRUCTIONS:
 1. Fix the code so it still opens ``TARGET_PPTX``, appends exactly one slide, saves to ``TARGET_PPTX``, and uses ``shared`` for styling.
 2. Do not write ``SHARED_PY_PATH`` or change shared on disk.
-3. Return the complete corrected script (full file)."""
+3. Use attribute names from the shared symbol index above exactly when referencing ``shared``.
+4. Call ``get_code_snippet`` if you need canonical python-pptx patterns.
+5. Return the complete corrected script (full file)."""
 
 
 def format_incremental_h1_user_message(
@@ -626,6 +496,7 @@ def format_incremental_h2_user_message(
     num_h2_slides: int,
     style_content: str | None,
     language: str | None,
+    shared_index: str = "",
 ) -> str:
     """User message for one H2 slide: single section body."""
     parts = [
@@ -634,9 +505,23 @@ def format_incremental_h2_user_message(
         f"Deck title (context): {deck_title}",
         f"Content slide {section_ordinal} of {num_h2_slides} (document order).",
         "",
-        "## SECTION MARKDOWN (one `##` slide):",
-        section_markdown,
     ]
+    if shared_index.strip():
+        parts.extend(
+            [
+                "## CURRENT shared.py SYMBOL INDEX (source of truth for ``shared`` names):",
+                "```text",
+                shared_index.strip(),
+                "```",
+                "",
+            ]
+        )
+    parts.extend(
+        [
+            "## SECTION MARKDOWN (one `##` slide):",
+            section_markdown,
+        ]
+    )
     msg = "\n".join(parts)
     return _append_chunk_style_language(
         msg,
@@ -651,9 +536,21 @@ def format_incremental_h2_validation_fix_prompt(
     issues: list[str],
     deck_title: str,
     section_markdown: str,
+    *,
+    shared_index: str = "",
 ) -> str:
     """Validation fix prompt for a single H2 slide script."""
+    if shared_index.strip():
+        shared_block = (
+            "## CURRENT shared.py SYMBOL INDEX (source of truth for ``shared`` names):\n"
+            "```text\n"
+            f"{shared_index.strip()}\n"
+            "```\n"
+        )
+    else:
+        shared_block = ""
     return INCREMENTAL_H2_VALIDATION_FIX_TEMPLATE.format(
+        shared_block=shared_block,
         original_code=original_code,
         issues="\n".join(f"- {i}" for i in issues) if issues else "- (none)",
         deck_title=deck_title,

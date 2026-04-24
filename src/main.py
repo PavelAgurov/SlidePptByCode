@@ -8,6 +8,7 @@ from pathlib import Path
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from src.colored_logging import ColorFormatter
 from src.config import load_settings
 from src.llm_client import LLMClient
 from src.code_generator import CodeGenerator
@@ -26,13 +27,16 @@ def setup_logging(verbose: bool = False) -> None:
     logs_dir = Path('.logs')
     logs_dir.mkdir(exist_ok=True)
 
+    fmt = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    stream = logging.StreamHandler()
+    stream.setFormatter(ColorFormatter(fmt))
+    file_handler = logging.FileHandler(logs_dir / "agent.log", encoding="utf-8")
+    file_handler.setFormatter(logging.Formatter(fmt))
+
     logging.basicConfig(
         level=level,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.StreamHandler(),
-            logging.FileHandler(logs_dir / 'agent.log', encoding='utf-8')
-        ]
+        handlers=[stream, file_handler],
+        force=True,
     )
 
 
