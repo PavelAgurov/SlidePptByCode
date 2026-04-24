@@ -56,7 +56,7 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help=(
             "LLM model to use (default: from config). "
-            "On PowerShell, quote values with hyphens, e.g. --model \"gpt-4.1\", or use --model=gpt-4.1"
+            "On PowerShell, quote values with hyphens, e.g. --model \"gpt-4.1-mini\", or use --model=gpt-4.1-mini"
         ),
     )
     parser.add_argument(
@@ -132,6 +132,18 @@ def normalize_output_filename(output_arg: str | None) -> str | None:
     return result
 
 
+def _print_token_usage(client: LLMClient | None) -> None:
+    """Print cumulative LLM token usage for this run (stdout)."""
+    if client is None:
+        return
+    u = client.session_token_usage()
+    print("\nToken usage (session):")
+    print(f"  Input:   {u.prompt_tokens}")
+    print(f"  Output:  {u.completion_tokens}")
+    print(f"  Cached:  {u.cached_tokens}")
+    print(f"  Total:   {u.total_tokens}")
+
+
 def main() -> int:
     """Main entry point."""
     args = parse_args()
@@ -193,19 +205,19 @@ def main() -> int:
         print("\n" + "=" * 60)
         if success:
             print(f"SUCCESS: Presentation created at {output_file}")
-            print("=" * 60)
-            return 0
         else:
             print("FAILED: Could not generate valid presentation")
             print("\nError log:")
             for error in error_log:
                 print(f"  - {error}")
-            print("=" * 60)
-            return 1
+        _print_token_usage(llm_client)
+        print("=" * 60)
+        return 0 if success else 1
 
     except Exception as e:
         logger.exception("Fatal error")
         print(f"\nFATAL ERROR: {str(e)}", file=sys.stderr)
+        _print_token_usage(llm_client)
         return 1
 
 

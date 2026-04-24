@@ -16,7 +16,7 @@ class Settings(BaseSettings):
 
     # API Configuration
     openrouter_api_key: str
-    model_id: str = "gpt-4.1"
+    model_id: str = "gpt-4.1-mini"
     base_url: str = "https://openrouter.ai/api/v1"
     temperature: float = 0
     # Cap completion budget so providers (e.g. OpenRouter) do not default to very large
