@@ -17,6 +17,7 @@ from src.script_inject import inject_h1_paths, inject_h2_slide_paths
 from src.task_chunker import extract_deck_title, split_into_chunks
 from src.shared_index import build_shared_index
 from src.layout_catalog import LayoutInfo, read_layouts
+from src.layout_describer import ensure_layout_descriptions
 from src.validator import (
     prefix_slide_digests,
     validate_deck_after_append,
@@ -147,6 +148,15 @@ def run_incremental_pipeline(
         )
         use_layout_selection = False
 
+    layout_descriptions: dict[int, str] = {}
+    if use_layout_selection and template_pptx is not None:
+        layout_descriptions = ensure_layout_descriptions(
+            generator=generator,
+            template_pptx=Path(template_pptx).resolve(),
+            layouts=layouts,
+            generated_dir=config.generated_dir,
+        )
+
     def _select_layout_with_validation(slide_markdown: str) -> LayoutInfo | None:
         if not use_layout_selection:
             return None
@@ -157,6 +167,7 @@ def run_incremental_pipeline(
             layouts=layouts,
             style_content=style_content,
             language=language,
+            descriptions=layout_descriptions,
         )
         idx = int(sel.selected_layout_index)
         if 0 <= idx < len(layouts):
@@ -176,6 +187,7 @@ def run_incremental_pipeline(
             layouts=layouts,
             style_content=style_content,
             language=language,
+            descriptions=layout_descriptions,
         )
         idx2 = int(sel2.selected_layout_index)
         if 0 <= idx2 < len(layouts):

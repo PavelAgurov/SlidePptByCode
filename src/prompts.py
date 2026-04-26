@@ -1,6 +1,7 @@
 """System prompts and templates for LLM interactions."""
 
 from .code_merger import CHUNK_MERGE_MARKER
+from .layout_catalog import LayoutInfo, format_layout_card_full, format_layouts_catalog_with_descriptions
 from .snippets import formatted_snippet_catalog_for_prompt
 
 _ERROR_PROMPT_CODE_MAX = 16_000
@@ -443,6 +444,16 @@ HARD RULES:
 - `selected_layout_index` MUST be one of the allowed indices listed in the user message.
 - Do not output any markdown or extra fields; return only the structured object."""
 
+# Bumped when `SYSTEM_PROMPT_LAYOUT_DESCRIBE` meaningfully changes (invalidates on-disk cache).
+LAYOUT_DESC_CACHE_PROMPT_VERSION = 1
+
+SYSTEM_PROMPT_LAYOUT_DESCRIBE = """You describe ONE PowerPoint master slide layout for a downstream agent that will pick a layout per slide.
+
+Use the layout name, placeholder types, placeholder names (often human-readable), any prompt/placeholder text from the template (e.g. time ranges or \"Section header here\"), and rough bbox/geometry to infer the slide's *intent* (what it is for), not just placeholder counts.
+Do not equate a layout named \"Content\" with generic body text if prompt text and structure indicate a table of contents, agenda, or section list.
+
+Return only structured output (see response model). One English sentence, no markdown, at most 160 characters."""
+
 
 INCREMENTAL_H2_VALIDATION_FIX_TEMPLATE = """The slide script ran but incremental validation failed.
 
@@ -567,15 +578,31 @@ def format_incremental_h2_user_message(
     )
 
 
+def format_layout_describe_user_message(*, layout: LayoutInfo) -> str:
+    """Static instructions first (prompt-cache friendly), layout card last."""
+
+    static = (
+        "Describe ONE master slide layout for a downstream layout-selection agent.\n"
+        "Focus on INTENT (what kind of slide it is for) — distinguish it from layouts "
+        "with similar placeholder type counts.\n"
+        "Return one sentence (<=160 chars), no markdown.\n"
+        "\n"
+        "## LAYOUT:\n"
+    )
+    return static + format_layout_card_full(layout)
+
+
 def format_layout_selection_user_message(
     *,
     slide_markdown: str,
     deck_title: str,
-    layouts_catalog_compact: str,
+    layouts: list[LayoutInfo],
     allowed_indices: list[int],
     style_content: str | None,
     language: str | None,
+    descriptions: dict[int, str] | None = None,
 ) -> str:
+    catalog = format_layouts_catalog_with_descriptions(layouts, descriptions)
     parts = [
         f'Choose a layout for one H2 content slide of deck "{deck_title}".',
         "",
@@ -583,7 +610,7 @@ def format_layout_selection_user_message(
         slide_markdown,
         "",
         "## AVAILABLE LAYOUTS (compact catalog):",
-        layouts_catalog_compact,
+        catalog,
         "",
         "Allowed selected_layout_index values: " + ", ".join(str(i) for i in allowed_indices),
     ]

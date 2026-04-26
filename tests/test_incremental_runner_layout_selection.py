@@ -7,7 +7,7 @@ from unittest.mock import Mock
 import pytest
 
 from src.incremental_runner import run_incremental_pipeline
-from src.models import IncrementalLlmScriptCode, LayoutSelection
+from src.models import LayoutDescription, LayoutSelection
 from src.layout_catalog import LayoutInfo
 
 
@@ -55,6 +55,7 @@ def test_layout_selection_called_for_h2_only_when_template(monkeypatch: pytest.M
 
     # Layout selection returns a valid index.
     generator.select_layout.return_value = LayoutSelection(explanation="x", selected_layout_index=0)
+    generator.describe_layout.return_value = LayoutDescription(description="test layout one-liner")
 
     executor = _Executor()
 
@@ -84,6 +85,7 @@ def test_layout_selection_called_for_h2_only_when_template(monkeypatch: pytest.M
     assert ok is True
     # Called once per H2; H1 should not call selection.
     assert generator.select_layout.call_count == 1
+    assert generator.describe_layout.call_count == 1
 
 
 def test_template_layout_forces_no_llm_selection(
@@ -102,6 +104,7 @@ def test_template_layout_forces_no_llm_selection(
     generator.fix_code_after_error.return_value = SimpleNamespace(code="from pptx import Presentation\n")
     generator.fix_incremental_h2_validation.return_value = SimpleNamespace(code="from pptx import Presentation\n")
     generator.select_layout.return_value = LayoutSelection(explanation="x", selected_layout_index=0)
+    generator.describe_layout.return_value = LayoutDescription(description="d")
 
     executor = _Executor()
     monkeypatch.setattr("src.incremental_runner.validate_incremental_h1_deck", lambda *a, **k: SimpleNamespace(is_valid=True, issues=[]))
@@ -131,6 +134,7 @@ def test_template_layout_forces_no_llm_selection(
     )
     assert ok is True
     assert generator.select_layout.call_count == 0
+    assert generator.describe_layout.call_count == 0
 
 
 def test_template_layout_unknown_name_errors(
@@ -198,4 +202,5 @@ def test_layout_selection_not_called_without_template(monkeypatch: pytest.Monkey
     )
     assert ok is True
     assert generator.select_layout.call_count == 0
+    assert generator.describe_layout.call_count == 0
 

@@ -10,6 +10,7 @@ from .models import (
     CodeExecutionResult,
     GeneratedCode,
     IncrementalLlmScriptCode,
+    LayoutDescription,
     LayoutSelection,
     ValidationResult,
 )
@@ -17,7 +18,9 @@ from .prompts import (
     SYSTEM_PROMPT,
     SYSTEM_PROMPT_INCREMENTAL_H1,
     SYSTEM_PROMPT_INCREMENTAL_H2,
+    SYSTEM_PROMPT_LAYOUT_DESCRIBE,
     SYSTEM_PROMPT_LAYOUT_SELECTION,
+    format_layout_describe_user_message,
     format_layout_selection_user_message,
     format_chunk_h2_slide_user_message,
     format_chunk_title_deck_user_message,
@@ -31,7 +34,7 @@ from .prompts import (
 )
 from .task_chunker import TaskChunk, extract_deck_title, section_function_name
 from .code_merger import merge_chunked_modules
-from .layout_catalog import LayoutInfo, format_layout_card_full, format_layouts_catalog_compact
+from .layout_catalog import LayoutInfo, format_layout_card_full
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +65,30 @@ class CodeGenerator:
             SnippetCallCache(),
         )
 
+    def describe_layout(self, layout: LayoutInfo) -> LayoutDescription:
+        """
+        One-sentence description of a single master layout (template decks only).
+        Does not mutate ``conversation_history``.
+        """
+        user = format_layout_describe_user_message(layout=layout)
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT_LAYOUT_DESCRIBE},
+            {"role": "user", "content": user},
+        ]
+        result: LayoutDescription = self.llm_client.generate_structured(
+            messages, LayoutDescription
+        )
+        text = (result.description or "").replace("\n", " ").strip()
+        preview = (text[:100] + "…") if len(text) > 100 else text
+        logger.info(
+            "Layout describe: idx=%s name=%r -> %s",
+            layout.index,
+            layout.name,
+            preview,
+            extra={"color_event": "layout_select"},
+        )
+        return result
+
     def select_layout(
         self,
         *,
@@ -70,6 +97,7 @@ class CodeGenerator:
         layouts: list[LayoutInfo],
         style_content: str | None = None,
         language: str | None = None,
+        descriptions: dict[int, str] | None = None,
     ) -> LayoutSelection:
         """
         Choose the best `prs.slide_layouts[index]` for a slide (template decks only).
@@ -82,10 +110,11 @@ class CodeGenerator:
         user = format_layout_selection_user_message(
             slide_markdown=slide_markdown,
             deck_title=deck_title,
-            layouts_catalog_compact=format_layouts_catalog_compact(layouts),
+            layouts=layouts,
             allowed_indices=allowed,
             style_content=style_content,
             language=language,
+            descriptions=descriptions,
         )
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT_LAYOUT_SELECTION},

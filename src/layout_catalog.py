@@ -154,3 +154,26 @@ def format_layouts_catalog_compact(items: list[LayoutInfo]) -> str:
         return "(no layouts)"
     return "\n".join(format_layout_card_compact(x) for x in items)
 
+
+def format_layouts_catalog_with_descriptions(
+    items: list[LayoutInfo],
+    descriptions: dict[int, str] | None,
+) -> str:
+    """
+    Like ``format_layouts_catalog_compact`` but appends a short ``desc:`` line per layout
+    when a non-empty description exists for that index.
+    """
+
+    if not items:
+        return "(no layouts)"
+    if not descriptions:
+        return format_layouts_catalog_compact(items)
+    out: list[str] = []
+    for li in items:
+        line = format_layout_card_compact(li)
+        d = (descriptions.get(li.index) or "").strip()
+        if d:
+            line = f"{line}  desc: {d}"
+        out.append(line)
+    return "\n".join(out)
+

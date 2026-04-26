@@ -64,6 +64,14 @@ class ChunkedSectionGeneratedCode(BaseModel):
     )
 
 
+class LayoutDescription(BaseModel):
+    """Structured output for one slide layout: short intent summary for later selection."""
+
+    description: str = Field(
+        description="One short sentence (<=160 chars) describing the layout intent / typical use"
+    )
+
+
 class LayoutSelection(BaseModel):
     """Structured output for choosing a slide layout from a template."""
 

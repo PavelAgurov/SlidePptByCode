@@ -8,6 +8,7 @@ from src.layout_catalog import (
     format_layout_card_compact,
     format_layout_card_full,
     format_layouts_catalog_compact,
+    format_layouts_catalog_with_descriptions,
     read_layouts,
 )
 
@@ -48,4 +49,14 @@ def test_layout_formatters_shapes(tmp_path: Path) -> None:
 
     catalog = format_layouts_catalog_compact(layouts[:3])
     assert catalog.count("placeholders:") == min(3, len(layouts))
+
+    same = format_layouts_catalog_with_descriptions(layouts[:3], None)
+    assert same == catalog
+
+    with_desc = format_layouts_catalog_with_descriptions(
+        layouts[:1],
+        {layouts[0].index: "Short intent text."},
+    )
+    assert "desc: Short intent text." in with_desc
+    assert "placeholders:" in with_desc
 
