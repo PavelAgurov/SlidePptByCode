@@ -412,6 +412,7 @@ INCREMENTAL SLIDE (H2) CONTRACT (orchestrator injects constants at the top of th
 - Open with ``prs = Presentation(str(TARGET_PPTX))``.
 - Append **exactly one** new slide at the end: ``prs.slides.add_slide(...)``. Do not remove slides. Do not modify shapes/text on slides whose index is less than the slide count before your addition (append-only for existing slides).
 - **Layouts and placeholders:** The same script runs on a **default scratch** deck and on a **template** deck; placeholder **idx** values differ (e.g. ``slide.placeholders[1]`` may raise ``KeyError`` on branded masters). Do **not** assume ``prs.slide_layouts[1]`` or ``slide.placeholders[1]`` for the body. Choose a layout that has both a title-type and a body-type placeholder using ``PP_PLACEHOLDER_TYPE`` (see ``incremental_h2_skeleton`` / ``content_slide`` snippets), then find the body by iterating ``slide.placeholders`` and matching type — not by numeric index.
+- If a `## SELECTED LAYOUT` block is present in the user message, use the injected `CHOSEN_LAYOUT_INDEX` constant and address placeholders strictly by their `idx` (from the layout card). When that block is absent, fall back to `pick_title_and_content_layout`.
 - If the section markdown contains a **pipe table** (``|`` columns), use ``get_code_snippet`` with ``table_markdown_grid`` and build a native ``Table`` via ``add_table``. Do **not** paste the markdown table into ``body.text`` or a bullet list as plain text.
 - Save back to the same file: ``prs.save(str(TARGET_PPTX))``.
 - End with ``if __name__ == '__main__':`` calling one entry function.
@@ -421,6 +422,26 @@ INCREMENTAL SLIDE (H2) CONTRACT (orchestrator injects constants at the top of th
 """ + _SNIPPET_TOOL_RULES + """
 
 Call ``get_code_snippet`` with ``incremental_h2_skeleton`` for a minimal append-one-slide pattern."""
+
+
+SYSTEM_PROMPT_LAYOUT_SELECTION = """You choose the best PowerPoint master slide layout for ONE content slide.
+
+You are given:
+- The slide content in markdown
+- A compact catalog of available `prs.slide_layouts` from the user's template deck
+
+Your job:
+- Pick the best matching layout index for this slide
+- Return structured output only (see response model)
+
+SELECTION HEURISTICS:
+- Prefer layouts whose name clearly matches the intent (e.g., \"Agenda\", \"Section Header\", \"Quote\", \"Comparison\").
+- Use placeholder TYPE counts as a weak signal: e.g. many BODY placeholders often indicates agenda/list layouts.
+- If the content is table-like or chart-like, prefer layouts that likely have BODY/OBJECT areas over title-only layouts.
+
+HARD RULES:
+- `selected_layout_index` MUST be one of the allowed indices listed in the user message.
+- Do not output any markdown or extra fields; return only the structured object."""
 
 
 INCREMENTAL_H2_VALIDATION_FIX_TEMPLATE = """The slide script ran but incremental validation failed.
@@ -497,6 +518,8 @@ def format_incremental_h2_user_message(
     style_content: str | None,
     language: str | None,
     shared_index: str = "",
+    *,
+    chosen_layout: object | None = None,
 ) -> str:
     """User message for one H2 slide: single section body."""
     parts = [
@@ -506,6 +529,19 @@ def format_incremental_h2_user_message(
         f"Content slide {section_ordinal} of {num_h2_slides} (document order).",
         "",
     ]
+    if chosen_layout is not None:
+        # Avoid importing LayoutInfo here to keep prompts.py lightweight; the runner passes
+        # an object from layout_catalog that has `.index`, `.name`, and a formatter is
+        # applied before passing to the model. We embed a pre-formatted string block.
+        # The CodeGenerator will pass `chosen_layout_card_full` as a string via this param
+        # (see code_generator wiring).
+        parts.extend(
+            [
+                "## SELECTED LAYOUT (already chosen by orchestrator — DO NOT pick another):",
+                str(chosen_layout).rstrip(),
+                "",
+            ]
+        )
     if shared_index.strip():
         parts.extend(
             [
@@ -528,6 +564,35 @@ def format_incremental_h2_user_message(
         style_content,
         language,
         style_apply_line="Match styling via the ``shared`` module; do not duplicate large palettes inline.",
+    )
+
+
+def format_layout_selection_user_message(
+    *,
+    slide_markdown: str,
+    deck_title: str,
+    layouts_catalog_compact: str,
+    allowed_indices: list[int],
+    style_content: str | None,
+    language: str | None,
+) -> str:
+    parts = [
+        f'Choose a layout for one H2 content slide of deck "{deck_title}".',
+        "",
+        "## SLIDE CONTENT (markdown):",
+        slide_markdown,
+        "",
+        "## AVAILABLE LAYOUTS (compact catalog):",
+        layouts_catalog_compact,
+        "",
+        "Allowed selected_layout_index values: " + ", ".join(str(i) for i in allowed_indices),
+    ]
+    msg = "\n".join(parts)
+    return _append_chunk_style_language(
+        msg,
+        style_content,
+        language,
+        style_apply_line="Use these as weak signals when choosing a branded layout.",
     )
 
 

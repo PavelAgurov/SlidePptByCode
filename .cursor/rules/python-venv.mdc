@@ -1,0 +1,25 @@
+---
+description: Always use project .venv for Python execution
+alwaysApply: true
+---
+
+# Python interpreter
+
+- When running Python, pytest, or any scripts in this repo, **always** use the project virtual environment interpreter:
+  - Windows: `.venv\\Scripts\\python.exe`
+- Do **not** try `python`, `py`, or system-installed interpreters.
+- Example:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q
+```
+
+# Testing
+
+- When running test scripts, **always** use pytest.exe:
+- Example:
+
+```powershell
+.\.venv\Scripts\pytest.exe
+```
+

@@ -1,0 +1,15 @@
+---
+description: Always use when running tests
+alwaysApply: true
+---
+
+# Testing
+
+- When running test scripts, **always** use pytest.exe:
+- Do **not** try `python`, `py`, or system-installed interpreters.
+- Example:
+
+```powershell
+.\.venv\Scripts\pytest.exe
+```
+

@@ -10,12 +10,15 @@ from .models import (
     CodeExecutionResult,
     GeneratedCode,
     IncrementalLlmScriptCode,
+    LayoutSelection,
     ValidationResult,
 )
 from .prompts import (
     SYSTEM_PROMPT,
     SYSTEM_PROMPT_INCREMENTAL_H1,
     SYSTEM_PROMPT_INCREMENTAL_H2,
+    SYSTEM_PROMPT_LAYOUT_SELECTION,
+    format_layout_selection_user_message,
     format_chunk_h2_slide_user_message,
     format_chunk_title_deck_user_message,
     format_error_fix_prompt,
@@ -28,6 +31,7 @@ from .prompts import (
 )
 from .task_chunker import TaskChunk, extract_deck_title, section_function_name
 from .code_merger import merge_chunked_modules
+from .layout_catalog import LayoutInfo, format_layout_card_full, format_layouts_catalog_compact
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +61,49 @@ class CodeGenerator:
             response_format,
             SnippetCallCache(),
         )
+
+    def select_layout(
+        self,
+        *,
+        slide_markdown: str,
+        deck_title: str,
+        layouts: list[LayoutInfo],
+        style_content: str | None = None,
+        language: str | None = None,
+    ) -> LayoutSelection:
+        """
+        Choose the best `prs.slide_layouts[index]` for a slide (template decks only).
+
+        This helper MUST NOT mutate `conversation_history` because it is used as a
+        deterministic pipeline step.
+        """
+
+        allowed = list(range(len(layouts)))
+        user = format_layout_selection_user_message(
+            slide_markdown=slide_markdown,
+            deck_title=deck_title,
+            layouts_catalog_compact=format_layouts_catalog_compact(layouts),
+            allowed_indices=allowed,
+            style_content=style_content,
+            language=language,
+        )
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT_LAYOUT_SELECTION},
+            {"role": "user", "content": user},
+        ]
+        result: LayoutSelection = self.llm_client.generate_structured(
+            messages, LayoutSelection
+        )
+        idx = int(result.selected_layout_index)
+        layout_name = layouts[idx].name if 0 <= idx < len(layouts) else "(out of range)"
+        logger.info(
+            "Layout selection: idx=%s name=%r | %s",
+            result.selected_layout_index,
+            layout_name,
+            (result.explanation or "")[:140].replace("\n", " "),
+            extra={"color_event": "layout_select"},
+        )
+        return result
 
     def generate_initial_code(self, task_content: str, style_content: str | None = None, language: str | None = None, output_filename: str | None = None) -> GeneratedCode:
         """
@@ -217,6 +264,7 @@ class CodeGenerator:
         *,
         incremental: bool = False,
         shared_index: str | None = None,
+        chosen_layout: LayoutInfo | None = None,
     ) -> GeneratedCode:
         """
         Fix code after execution error.
@@ -245,6 +293,15 @@ class CodeGenerator:
                 stderr=error_result.stderr or "",
                 shared_index=shared_index,
             )
+            if chosen_layout is not None:
+                error_prompt = (
+                    "## SELECTED LAYOUT (already chosen by orchestrator — DO NOT pick another):\n"
+                    "- The orchestrator injects `CHOSEN_LAYOUT_INDEX`.\n"
+                    "- Use placeholders by exact `idx` from the layout card below.\n\n"
+                    + format_layout_card_full(chosen_layout)
+                    + "\n\n"
+                    + error_prompt
+                )
             self.conversation_history = [
                 {"role": "system", "content": sys_msg},
                 {"role": "user", "content": task_user},
@@ -414,6 +471,8 @@ class CodeGenerator:
         style_content: str | None = None,
         language: str | None = None,
         shared_index: str = "",
+        *,
+        chosen_layout: LayoutInfo | None = None,
     ) -> GeneratedCode:
         """Generate one H2 slide-append script (fresh conversation)."""
         logger.info(
@@ -424,6 +483,19 @@ class CodeGenerator:
             extra={"color_event": "gen_section"},
         )
         self.style_content = style_content
+        chosen_block: str | None = None
+        if chosen_layout is not None:
+            chosen_block = "\n".join(
+                [
+                    f'- index: {chosen_layout.index}; name: "{chosen_layout.name}"',
+                    "- The orchestrator injects `CHOSEN_LAYOUT_INDEX = "
+                    f"{chosen_layout.index}` at the top of the script.",
+                    "- Use it: `layout = prs.slide_layouts[CHOSEN_LAYOUT_INDEX]; slide = prs.slides.add_slide(layout)`.",
+                    "- Address placeholders by exact `idx` from the card below; do NOT search by type and do NOT call `pick_title_and_content_layout`.",
+                    "",
+                    format_layout_card_full(chosen_layout),
+                ]
+            )
         user = format_incremental_h2_user_message(
             section_markdown=section_markdown,
             deck_title=deck_title,
@@ -432,6 +504,7 @@ class CodeGenerator:
             style_content=style_content,
             language=language,
             shared_index=shared_index,
+            chosen_layout=chosen_block,
         )
         self.conversation_history = [
             {"role": "system", "content": SYSTEM_PROMPT_INCREMENTAL_H2},
@@ -458,6 +531,7 @@ class CodeGenerator:
         section_markdown: str,
         *,
         shared_index: str = "",
+        chosen_layout: LayoutInfo | None = None,
     ) -> GeneratedCode:
         """Fix one H2 slide script after incremental validation failure."""
         logger.info("Fixing incremental H2 after validation: %s", issues)
@@ -468,6 +542,15 @@ class CodeGenerator:
             section_markdown=section_markdown,
             shared_index=shared_index,
         )
+        if chosen_layout is not None:
+            prompt = (
+                "## SELECTED LAYOUT (already chosen by orchestrator — DO NOT pick another):\n"
+                "- The orchestrator injects `CHOSEN_LAYOUT_INDEX`.\n"
+                "- Use placeholders by exact `idx` from the layout card below.\n\n"
+                + format_layout_card_full(chosen_layout)
+                + "\n\n"
+                + prompt
+            )
         self.conversation_history.append({"role": "user", "content": prompt})
         raw = self._structured_with_snippets(
             self.conversation_history,

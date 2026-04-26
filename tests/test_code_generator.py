@@ -3,7 +3,8 @@
 import pytest
 from unittest.mock import Mock
 from src.code_generator import CodeGenerator
-from src.models import GeneratedCode, CodeExecutionResult, ValidationResult
+from src.models import GeneratedCode, CodeExecutionResult, LayoutSelection, ValidationResult
+from src.layout_catalog import LayoutInfo
 
 
 @pytest.fixture
@@ -170,3 +171,25 @@ def test_fix_code_after_validation(generator: CodeGenerator, mock_llm_client: Mo
     assert result.code == mock_response.code
     assert len(generator.conversation_history) == 3
     mock_llm_client.generate_structured_with_snippet_tools.assert_called_once()
+
+
+def test_select_layout_does_not_mutate_conversation_history(
+    generator: CodeGenerator, mock_llm_client: Mock
+) -> None:
+    mock_llm_client.generate_structured.return_value = LayoutSelection(
+        explanation="ok",
+        selected_layout_index=0,
+    )
+    generator.conversation_history = [
+        {"role": "system", "content": "SYS"},
+        {"role": "user", "content": "U"},
+    ]
+    layouts = [LayoutInfo(index=0, name="L0", placeholders=())]
+    out = generator.select_layout(
+        slide_markdown="## x",
+        deck_title="Deck",
+        layouts=layouts,
+    )
+    assert out.selected_layout_index == 0
+    assert len(generator.conversation_history) == 2
+    mock_llm_client.generate_structured.assert_called_once()

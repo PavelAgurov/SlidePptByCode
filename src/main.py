@@ -101,6 +101,16 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--template_layout",
+        default=None,
+        metavar="NAME",
+        help=(
+            "Force using a specific slide layout name from the --template master layouts "
+            "for all generated H2 slides (skips LLM layout selection). "
+            "Errors if the name is not found in the template or if --template is not set."
+        ),
+    )
+    parser.add_argument(
         "--slide_max",
         type=int,
         default=None,
@@ -230,6 +240,8 @@ def main() -> int:
                     "Output path matches the template path; use a different "
                     "--output so the template file is not overwritten."
                 )
+        if args.template_layout and not args.template:
+            raise ValueError("--template_layout requires --template")
 
         # Initialize components
         llm_client = LLMClient(config)
@@ -242,6 +254,7 @@ def main() -> int:
             language=args.lang,
             output_filename=output_filename,
             template_pptx=template_pptx,
+            template_layout=args.template_layout,
             generator=generator,
             executor=executor,
             config=config,

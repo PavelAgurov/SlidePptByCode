@@ -16,6 +16,7 @@ from src.ppt_bootstrap import copy_deck_template, create_empty_ppt
 from src.script_inject import inject_h1_paths, inject_h2_slide_paths
 from src.task_chunker import extract_deck_title, split_into_chunks
 from src.shared_index import build_shared_index
+from src.layout_catalog import LayoutInfo, read_layouts
 from src.validator import (
     prefix_slide_digests,
     validate_deck_after_append,
@@ -50,6 +51,7 @@ def run_incremental_pipeline(
     max_retries: int,
     slide_max: int | None = None,
     template_pptx: Path | None = None,
+    template_layout: str | None = None,
 ) -> tuple[bool, Path | None, list[str]]:
     """
     Run incremental generation: H1 (deck stub + shared), then each H2 slide.
@@ -82,6 +84,9 @@ def run_incremental_pipeline(
     scratch_dir.mkdir(parents=True, exist_ok=True)
 
     deck_from_template = template_pptx is not None
+    if template_layout and not deck_from_template:
+        error_log.append("--template_layout requires --template")
+        return False, None, error_log
     if template_pptx is not None:
         tpl = Path(template_pptx).resolve()
         if not tpl.is_file():
@@ -106,6 +111,80 @@ def run_incremental_pipeline(
             return False, None, error_log
     else:
         create_empty_ppt(deck_path)
+
+    layouts: list[LayoutInfo] = []
+    if deck_from_template:
+        try:
+            layouts = read_layouts(deck_path)
+        except Exception as e:
+            logger.warning(
+                "read_layouts failed (%s); proceeding without layout selection",
+                e,
+            )
+            layouts = []
+    use_layout_selection = bool(layouts)
+
+    forced_layout: LayoutInfo | None = None
+    if template_layout:
+        if not layouts:
+            error_log.append(
+                f"--template_layout was provided ({template_layout!r}) but no layouts could be read from the template"
+            )
+            return False, None, error_log
+        target = template_layout.strip()
+        forced_layout = next((li for li in layouts if li.name == target), None)
+        if forced_layout is None:
+            available = ", ".join(repr(li.name) for li in layouts if li.name)
+            error_log.append(
+                f"Template layout name not found: {template_layout!r}. Available layout names: {available}"
+            )
+            return False, None, error_log
+        logger.info(
+            "Forcing template layout for all H2 slides: #%s %r",
+            forced_layout.index,
+            forced_layout.name,
+            extra={"color_event": "layout_select"},
+        )
+        use_layout_selection = False
+
+    def _select_layout_with_validation(slide_markdown: str) -> LayoutInfo | None:
+        if not use_layout_selection:
+            return None
+        allowed = list(range(len(layouts)))
+        sel = generator.select_layout(
+            slide_markdown=slide_markdown,
+            deck_title=deck_title,
+            layouts=layouts,
+            style_content=style_content,
+            language=language,
+        )
+        idx = int(sel.selected_layout_index)
+        if 0 <= idx < len(layouts):
+            return layouts[idx]
+
+        logger.warning(
+            "Layout selection out of range (%s), retrying once. Allowed: %s",
+            idx,
+            allowed,
+        )
+        sel2 = generator.select_layout(
+            slide_markdown=(
+                slide_markdown
+                + "\n\n(Your previous selected_layout_index was out of range; choose only from the allowed values.)"
+            ),
+            deck_title=deck_title,
+            layouts=layouts,
+            style_content=style_content,
+            language=language,
+        )
+        idx2 = int(sel2.selected_layout_index)
+        if 0 <= idx2 < len(layouts):
+            return layouts[idx2]
+        logger.warning(
+            "Layout selection out of range after retry (%s); falling back to default layout picking.",
+            idx2,
+        )
+        return None
 
     # --- H1 ---
     h1_code = generator.generate_incremental_h1(
@@ -163,6 +242,27 @@ def run_incremental_pipeline(
         deck_slide_count_before = len(Presentation(str(deck_path)).slides)
         prefix_before = prefix_slide_digests(deck_path, deck_slide_count_before)
 
+        chosen_layout = _select_layout_with_validation(chunk.body)
+        if forced_layout is not None:
+            chosen_layout = forced_layout
+        chosen_layout_index = chosen_layout.index if chosen_layout is not None else None
+        if chosen_layout is not None:
+            logger.info(
+                "Slide %s/%s: chosen layout #%s %r",
+                ord1,
+                num_h2_total,
+                chosen_layout.index,
+                chosen_layout.name,
+                extra={"color_event": "layout_select"},
+            )
+        elif use_layout_selection:
+            logger.info(
+                "Slide %s/%s: layout selection failed; using default layout picking",
+                ord1,
+                num_h2_total,
+                extra={"color_event": "layout_select"},
+            )
+
         slide_code = generator.generate_incremental_slide(
             chunk.body,
             deck_title,
@@ -171,15 +271,22 @@ def run_incremental_pipeline(
             style_content,
             language,
             shared_index=shared_index,
+            chosen_layout=chosen_layout,
         ).code
 
         deck_backup = deck_path.with_suffix(deck_path.suffix + ".bak")
 
         for attempt in range(max_retries):
             scratch_path = scratch_dir / f"slide_{ord1:03d}_try{attempt + 1}.pptx"
-            baseline = create_empty_ppt(scratch_path)
+            shutil.copy2(deck_path, scratch_path)
+            baseline = deck_slide_count_before
 
-            scr_script = inject_h2_slide_paths(slide_code, scratch_path, shared_path)
+            scr_script = inject_h2_slide_paths(
+                slide_code,
+                scratch_path,
+                shared_path,
+                chosen_layout_index=chosen_layout_index,
+            )
             scr_file = executor.save_code(
                 scr_script, f"incremental_slide_{ord1:03d}_scratch_{attempt + 1}.py"
             )
@@ -198,6 +305,7 @@ def run_incremental_pipeline(
                     scr_res,
                     incremental=True,
                     shared_index=shared_index,
+                    chosen_layout=chosen_layout,
                 ).code
                 continue
 
@@ -215,11 +323,17 @@ def run_incremental_pipeline(
                     deck_title,
                     chunk.body,
                     shared_index=shared_index,
+                    chosen_layout=chosen_layout,
                 ).code
                 continue
 
             shutil.copy2(deck_path, deck_backup)
-            deck_script = inject_h2_slide_paths(slide_code, deck_path, shared_path)
+            deck_script = inject_h2_slide_paths(
+                slide_code,
+                deck_path,
+                shared_path,
+                chosen_layout_index=chosen_layout_index,
+            )
             deck_file = executor.save_code(
                 deck_script, f"incremental_slide_{ord1:03d}_deck_{attempt + 1}.py"
             )
@@ -237,6 +351,7 @@ def run_incremental_pipeline(
                     deck_res,
                     incremental=True,
                     shared_index=shared_index,
+                    chosen_layout=chosen_layout,
                 ).code
                 continue
 
@@ -257,6 +372,7 @@ def run_incremental_pipeline(
                     deck_title,
                     chunk.body,
                     shared_index=shared_index,
+                    chosen_layout=chosen_layout,
                 ).code
                 continue
 
@@ -274,6 +390,7 @@ def run_incremental_pipeline(
                         deck_title,
                         chunk.body,
                         shared_index=shared_index,
+                        chosen_layout=chosen_layout,
                     ).code
                     continue
             except OSError as e:

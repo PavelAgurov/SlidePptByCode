@@ -24,3 +24,16 @@ def test_inject_h2_preloads_shared(tmp_path: Path) -> None:
     assert "TARGET_PPTX" in out
     assert "exec_module" in out
     assert "shared =" in out or "= _orch" in out
+
+
+def test_inject_h2_chosen_layout_index_constant(tmp_path: Path) -> None:
+    shared = tmp_path / "shared.py"
+    shared.write_text("X = 1\n", encoding="utf-8")
+    target = tmp_path / "t.pptx"
+    code = "pass\n"
+
+    out = inject_h2_slide_paths(code, target, shared, chosen_layout_index=3)
+    assert "CHOSEN_LAYOUT_INDEX = 3" in out
+
+    out2 = inject_h2_slide_paths(code, target, shared)
+    assert "CHOSEN_LAYOUT_INDEX" not in out2

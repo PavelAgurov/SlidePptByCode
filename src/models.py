@@ -64,6 +64,16 @@ class ChunkedSectionGeneratedCode(BaseModel):
     )
 
 
+class LayoutSelection(BaseModel):
+    """Structured output for choosing a slide layout from a template."""
+
+    explanation: str = Field(description="Why this layout fits the slide content")
+    selected_layout_index: int = Field(
+        ge=0,
+        description="Index in prs.slide_layouts; MUST be one of the listed allowed indices",
+    )
+
+
 class CodeExecutionResult(BaseModel):
     """Result of executing generated code."""
 
