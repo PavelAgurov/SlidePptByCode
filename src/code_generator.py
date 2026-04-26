@@ -12,26 +12,28 @@ from .models import (
     IncrementalLlmScriptCode,
     LayoutDescription,
     LayoutSelection,
+    SharedModuleCode,
     ValidationResult,
 )
 from .prompts import (
     SYSTEM_PROMPT,
-    SYSTEM_PROMPT_INCREMENTAL_H1,
-    SYSTEM_PROMPT_INCREMENTAL_H2,
+    SYSTEM_PROMPT_INCREMENTAL_SLIDE,
     SYSTEM_PROMPT_LAYOUT_DESCRIBE,
     SYSTEM_PROMPT_LAYOUT_SELECTION,
+    SYSTEM_PROMPT_SHARED_EXTEND,
     format_layout_describe_user_message,
     format_layout_selection_user_message,
     format_chunk_h2_slide_user_message,
     format_chunk_title_deck_user_message,
     format_error_fix_prompt,
     format_incremental_execution_error_fix_prompt,
-    format_incremental_h1_user_message,
-    format_incremental_h1_validation_fix_prompt,
-    format_incremental_h2_user_message,
     format_incremental_h2_validation_fix_prompt,
+    format_incremental_slide_user_message,
+    format_shared_extend_fix_user_message,
+    format_shared_extend_user_message,
     format_validation_fix_prompt,
 )
+from .shared_default import DEFAULT_SHARED_PY
 from .task_chunker import TaskChunk, extract_deck_title, section_function_name
 from .code_merger import merge_chunked_modules
 from .layout_catalog import LayoutInfo, format_layout_card_full
@@ -79,15 +81,16 @@ class CodeGenerator:
             messages, LayoutDescription
         )
         text = (result.description or "").replace("\n", " ").strip()
-        preview = (text[:100] + "…") if len(text) > 100 else text
         logger.info(
-            "Layout describe: idx=%s name=%r -> %s",
+            "Layout describe: idx=%s name=%r slide_type=%s slide_has_image_placeholder=%s -> %s",
             layout.index,
             layout.name,
-            preview,
+            result.slide_type,
+            result.slide_has_image_placeholder,
+            text,
             extra={"color_event": "layout_select"},
         )
-        return result
+        return result.model_copy(update={"description": text})
 
     def select_layout(
         self,
@@ -106,7 +109,7 @@ class CodeGenerator:
         deterministic pipeline step.
         """
 
-        allowed = list(range(len(layouts)))
+        allowed = [li.index for li in layouts]
         user = format_layout_selection_user_message(
             slide_markdown=slide_markdown,
             deck_title=deck_title,
@@ -124,12 +127,13 @@ class CodeGenerator:
             messages, LayoutSelection
         )
         idx = int(result.selected_layout_index)
-        layout_name = layouts[idx].name if 0 <= idx < len(layouts) else "(out of range)"
+        picked = next((li for li in layouts if li.index == idx), None)
+        layout_name = picked.name if picked is not None else "(out of range)"
         logger.info(
             "Layout selection: idx=%s name=%r | %s",
             result.selected_layout_index,
             layout_name,
-            (result.explanation or "")[:140].replace("\n", " "),
+            (result.explanation or "").replace("\n", " "),
             extra={"color_event": "layout_select"},
         )
         return result
@@ -425,89 +429,79 @@ class CodeGenerator:
         logger.info("Code fixed after validation")
         return result
 
-    def generate_incremental_h1(
-        self,
-        preamble_markdown: str,
-        deck_title: str,
-        style_content: str | None = None,
-        language: str | None = None,
-        deck_from_template: bool = False,
-    ) -> GeneratedCode:
-        """Generate H1 script: fill deck stub and write ``shared.py``."""
+    def extend_shared_module(self, style_content: str | None) -> str:
+        """
+        Produce the source for ``shared.py``.
+
+        - If ``style_content`` is empty/whitespace, return :data:`DEFAULT_SHARED_PY`
+          verbatim (no LLM call).
+        - Otherwise, ask the LLM to extend the default with brand colors / styling
+          helpers based on the provided guidelines.
+        """
+        if not style_content or not style_content.strip():
+            logger.info(
+                "Shared module: no style provided -> using DEFAULT_SHARED_PY"
+            )
+            return DEFAULT_SHARED_PY
         logger.info(
-            "=== Incremental H1: title deck + shared.py | title=%r ===",
-            deck_title,
+            "Shared module: extending DEFAULT_SHARED_PY with style guidelines",
             extra={"color_event": "gen_section"},
         )
         self.style_content = style_content
-        user = format_incremental_h1_user_message(
-            preamble_markdown=preamble_markdown,
-            deck_title=deck_title,
+        user = format_shared_extend_user_message(
+            default_shared_py=DEFAULT_SHARED_PY,
             style_content=style_content,
-            language=language,
-            deck_from_template=deck_from_template,
         )
         self.conversation_history = [
-            {"role": "system", "content": SYSTEM_PROMPT_INCREMENTAL_H1},
+            {"role": "system", "content": SYSTEM_PROMPT_SHARED_EXTEND},
             {"role": "user", "content": user},
         ]
-        raw = self._structured_with_snippets(
-            self.conversation_history,
-            IncrementalLlmScriptCode,
+        result: SharedModuleCode = self.llm_client.generate_structured(
+            self.conversation_history, SharedModuleCode
         )
-        result = _incremental_raw_to_generated(raw)
         self.conversation_history.append(
             {
                 "role": "assistant",
                 "content": f"Code:\n{result.code}\n\nExplanation: {result.explanation}",
             }
         )
-        return result
+        return result.code.strip() + "\n"
 
-    def fix_incremental_h1_validation(
-        self,
-        original_code: str,
-        issues: list[str],
-        preamble_markdown: str,
-    ) -> GeneratedCode:
-        """Fix H1 script after incremental validation failure."""
-        logger.info("Fixing incremental H1 after validation: %s", issues)
-        prompt = format_incremental_h1_validation_fix_prompt(
-            original_code=original_code,
-            issues=issues,
-            preamble_markdown=preamble_markdown,
+    def fix_shared_module(self, prev_code: str, traceback: str) -> str:
+        """Fix shared.py after verification failure (parse/import/missing names)."""
+        logger.info("Fixing shared.py after verification: %s", traceback.splitlines()[0] if traceback else "")
+        user = format_shared_extend_fix_user_message(
+            prev_code=prev_code, traceback=traceback
         )
-        self.conversation_history.append({"role": "user", "content": prompt})
-        raw = self._structured_with_snippets(
-            self.conversation_history,
-            IncrementalLlmScriptCode,
+        self.conversation_history.append({"role": "user", "content": user})
+        result: SharedModuleCode = self.llm_client.generate_structured(
+            self.conversation_history, SharedModuleCode
         )
-        result = _incremental_raw_to_generated(raw)
         self.conversation_history.append(
             {
                 "role": "assistant",
                 "content": f"Fixed code:\n{result.code}\n\nExplanation: {result.explanation}",
             }
         )
-        return result
+        return result.code.strip() + "\n"
 
     def generate_incremental_slide(
         self,
         section_markdown: str,
         deck_title: str,
         section_ordinal: int,
-        num_h2_slides: int,
+        num_slides: int,
         style_content: str | None = None,
         language: str | None = None,
         shared_index: str = "",
         *,
         chosen_layout: LayoutInfo | None = None,
     ) -> GeneratedCode:
-        """Generate one H2 slide-append script (fresh conversation)."""
+        """Generate one slide-append script (fresh conversation)."""
         logger.info(
-            "=== Incremental H2 slide %s/%s | deck=%r ===",
+            "=== Incremental slide %s/%s | deck=%r ===",
             section_ordinal,
-            num_h2_slides,
+            num_slides,
             deck_title,
             extra={"color_event": "gen_section"},
         )
@@ -525,18 +519,16 @@ class CodeGenerator:
                     format_layout_card_full(chosen_layout),
                 ]
             )
-        user = format_incremental_h2_user_message(
+        user = format_incremental_slide_user_message(
             section_markdown=section_markdown,
             deck_title=deck_title,
-            section_ordinal=section_ordinal,
-            num_h2_slides=num_h2_slides,
             style_content=style_content,
             language=language,
             shared_index=shared_index,
             chosen_layout=chosen_block,
         )
         self.conversation_history = [
-            {"role": "system", "content": SYSTEM_PROMPT_INCREMENTAL_H2},
+            {"role": "system", "content": SYSTEM_PROMPT_INCREMENTAL_SLIDE},
             {"role": "user", "content": user},
         ]
         raw = self._structured_with_snippets(

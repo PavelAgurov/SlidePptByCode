@@ -36,59 +36,6 @@ def prefix_slide_digests(pptx_path: Path, num_slides: int) -> list[str]:
     return [slide_text_digest(prs.slides[i]) for i in range(n)]
 
 
-def validate_incremental_h1_deck(
-    deck_path: Path,
-    shared_py_path: Path,
-    _deck_title: str,
-) -> ValidationResult:
-    """
-    Validate deck after H1: file ok, ``shared.py`` exists, at least one slide with content.
-
-    ``_deck_title`` is kept for API symmetry / future stricter checks (e.g. title on slide 1).
-    """
-    issues: list[str] = []
-    if not deck_path.exists():
-        return ValidationResult(
-            valid=False,
-            slide_count=0,
-            has_titles=False,
-            issues=["Deck file does not exist"],
-        )
-    if not shared_py_path.exists():
-        issues.append(f"shared.py not found at {shared_py_path}")
-    elif shared_py_path.stat().st_size == 0:
-        issues.append("shared.py is empty")
-
-    try:
-        prs = Presentation(str(deck_path))
-        slide_count = len(prs.slides)
-        if slide_count < 1:
-            issues.append("Deck has no slides after H1")
-        else:
-            digest0 = slide_text_digest(prs.slides[0])
-            if not digest0.strip():
-                issues.append("First slide has no readable text/content after H1")
-
-        has_titles = slide_count >= 1 and not any(
-            "no readable" in x for x in issues
-        )
-        valid = len(issues) == 0
-        return ValidationResult(
-            valid=valid,
-            slide_count=slide_count,
-            expected_slide_count=None,
-            has_titles=has_titles,
-            issues=issues,
-        )
-    except Exception as e:
-        return ValidationResult(
-            valid=False,
-            slide_count=0,
-            has_titles=False,
-            issues=[f"Error opening deck after H1: {e}"],
-        )
-
-
 def validate_scratch_append(
     scratch_path: Path,
     baseline_slide_count: int,

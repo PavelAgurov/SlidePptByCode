@@ -9,7 +9,6 @@ from src.task_chunker import TaskChunk
 from src.validator import (
     prefix_slide_digests,
     validate_deck_after_append,
-    validate_incremental_h1_deck,
 )
 
 
@@ -52,17 +51,3 @@ def test_validate_deck_after_append_prefix(tmp_path: Path) -> None:
     assert v.slide_count == n_before + 1
 
 
-def test_validate_incremental_h1_deck_requires_shared(tmp_path: Path) -> None:
-    deck = tmp_path / "d.pptx"
-    create_empty_ppt(deck)
-    prs = Presentation(str(deck))
-    t = prs.slides[0].shapes.title
-    assert t is not None
-    t.text = "Hello Deck"
-    prs.save(str(deck))
-
-    shared = tmp_path / "shared.py"
-    shared.write_text("# helpers\n", encoding="utf-8")
-
-    v = validate_incremental_h1_deck(deck, shared, "Hello Deck")
-    assert v.is_valid

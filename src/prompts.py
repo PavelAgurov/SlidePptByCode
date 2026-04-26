@@ -375,45 +375,40 @@ def format_validation_fix_prompt(
 
 
 # ---------------------------------------------------------------------------
-# Incremental pipeline (H1 deck stub + shared.py, then H2 append per slide)
+# Incremental pipeline (shared.py once, then unified per-slide append)
 # ---------------------------------------------------------------------------
 
-SYSTEM_PROMPT_INCREMENTAL_H1 = """You are an expert Python developer using python-pptx.
+SYSTEM_PROMPT_SHARED_EXTEND = """You extend a small Python helper module ``shared.py`` used by per-slide scripts.
 
-STRUCTURED OUTPUT (critical):
-- You return **one** Python module in the ``code`` field: normal ``.py`` source, not markdown, not "here is shared.py" as the only payload.
-- The ``code`` string **must** contain an import of python-pptx, e.g. ``from pptx import Presentation`` (and typically ``from pptx.util import Inches, Pt``, etc.) **before** any deck logic.
-- Put the shared helper **source** inside your script as a triple-quoted string (or build it with concatenation) and pass it to ``SHARED_PY_PATH.write_text(..., encoding='utf-8')``. Do **not** return the shared module alone without ``from pptx import Presentation`` and deck code.
-
-INCREMENTAL H1 CONTRACT (orchestrator injects path constants at the top of the file):
-- Variables ``DECK_PPTX_PATH`` and ``SHARED_PY_PATH`` are already defined (do not redefine).
-- Open the existing deck with ``prs = Presentation(str(DECK_PPTX_PATH))``. Do NOT call ``Presentation()`` with no arguments to create a new template for the deck.
-- Implement the title / H1 block from the markdown: fill the first slide(s) as appropriate. Prefer editing an existing title slide (or the most suitable existing slide) rather than adding many new slides, unless the task clearly needs more. Do not remove existing slides unless the task explicitly requires it.
-- Write the shared style/helper module to ``SHARED_PY_PATH`` using ``SHARED_PY_PATH.write_text(...)`` (UTF-8). This file must be valid Python and importable; put palette helpers (e.g. hex_to_rgb), layout helpers, and any constants used across slides there.
-- After writing ``shared.py``, you may load it with importlib from ``SHARED_PY_PATH`` and use it when building the H1 slide(s), or duplicate minimal logic — but the file on disk must exist and be usable by later slide scripts.
-- Save only to ``DECK_PPTX_PATH``: ``prs.save(str(DECK_PPTX_PATH))`` (parent directory already exists).
-- End with ``if __name__ == '__main__':`` calling a single entry function (e.g. ``main()`` or ``run()``) that performs all steps.
-- Use only the Python standard library plus python-pptx. Do not import requests, Pillow, matplotlib, etc., unless the task explicitly requires them.
-- Do not print the deck path for orchestration; optional logs are fine.
-
-""" + _SNIPPET_TOOL_RULES + """
-
-Call ``get_code_snippet`` with ``incremental_h1_skeleton`` if you need a minimal end-to-end pattern for this contract."""
+CONTRACT:
+- Output a complete Python module in the ``code`` field. No markdown fences.
+- You are given a DEFAULT module body and STYLE GUIDELINES.
+- Keep **every** symbol from the default (functions and constants) with the same names and the same call signatures. You may extend the body of a function or its docstring, but the public name must stay; do not rename or delete anything.
+- Add named ``RGBColor`` palette constants for colors mentioned in the style guidelines, using descriptive uppercase names (e.g. ``ELF_GREEN``, ``DEEP_SAFFRON``). Use the existing ``rgb("#RRGGBB")`` helper.
+- Allowed imports: only ``from pptx.dml.color import RGBColor``. Do not import anything else, especially not ``pptx.Presentation``, ``pathlib``, etc.
+- The module must be importable as-is (no top-level side effects beyond constant definitions, no I/O, no print).
+- No deck logic: shared.py is consumed by other scripts that build slides."""
 
 
-SYSTEM_PROMPT_INCREMENTAL_H2 = """You are an expert Python developer using python-pptx.
+SYSTEM_PROMPT_INCREMENTAL_SLIDE = """You are an expert Python developer using python-pptx.
 
 STRUCTURED OUTPUT (critical):
 - The ``code`` field is **one** runnable ``.py`` file. It **must** include ``from pptx import Presentation`` or ``import pptx`` (in addition to any other imports).
 
-INCREMENTAL SLIDE (H2) CONTRACT (orchestrator injects constants at the top of the file):
-- ``TARGET_PPTX`` is the path to the presentation to modify (scratch or final deck).
+USER MESSAGE STRUCTURE (critical — read carefully):
+- The user message uses XML-style tags. Treat each tag as an isolated container.
+- ``<slide_markdown>`` is the **only** source of slide content. Render exactly what is inside it.
+- ``<chosen_layout>``, ``<shared_symbols>``, ``<deck_context>``, ``<style_note>``, and ``<language_requirement>`` are **instructions/metadata**, NOT slide content. Never put their text on the slide.
+- If a brand style applies, the palette is already encoded as constants on ``shared.*`` (see ``<shared_symbols>``). NEVER paste color tables, hex lists, or palette guides onto the slide as content — reference ``shared.*`` constants in code instead.
+
+PER-SLIDE APPEND CONTRACT (orchestrator injects constants at the top of the file):
+- ``TARGET_PPTX`` is the path to the presentation to modify (scratch or final deck). The deck may currently have **0 or more** slides.
 - ``shared`` is already loaded from ``SHARED_PY_PATH`` — use ``shared`` for styling/helpers; do NOT write to ``SHARED_PY_PATH`` and do not redefine it.
 - Use **only** attribute names that appear in the ``CURRENT shared.py SYMBOL INDEX`` block in the user message (exact spelling). Never invent names like ``shared.elf_green`` if the index shows ``ELF_GREEN``.
 - Open with ``prs = Presentation(str(TARGET_PPTX))``.
-- Append **exactly one** new slide at the end: ``prs.slides.add_slide(...)``. Do not remove slides. Do not modify shapes/text on slides whose index is less than the slide count before your addition (append-only for existing slides).
-- **Layouts and placeholders:** The same script runs on a **default scratch** deck and on a **template** deck; placeholder **idx** values differ (e.g. ``slide.placeholders[1]`` may raise ``KeyError`` on branded masters). Do **not** assume ``prs.slide_layouts[1]`` or ``slide.placeholders[1]`` for the body. Choose a layout that has both a title-type and a body-type placeholder using ``PP_PLACEHOLDER_TYPE`` (see ``incremental_h2_skeleton`` / ``content_slide`` snippets), then find the body by iterating ``slide.placeholders`` and matching type — not by numeric index.
-- If a `## SELECTED LAYOUT` block is present in the user message, use the injected `CHOSEN_LAYOUT_INDEX` constant and address placeholders strictly by their `idx` (from the layout card). When that block is absent, fall back to `pick_title_and_content_layout`.
+- Append **exactly one** new slide at the end: ``prs.slides.add_slide(...)``. Do not remove slides. Do not modify shapes/text on slides whose index is less than the slide count before your addition (append-only for existing slides). Appending also works when the deck currently has zero slides — the new slide simply becomes slide 0.
+- **Layouts and placeholders:** Different layouts have different placeholder ``idx`` values. Always use the ``CHOSEN_LAYOUT_INDEX`` constant the orchestrator injects. The user message contains a ``SELECTED LAYOUT`` block listing every placeholder ``idx`` and its ``type``; address placeholders strictly by exact ``idx`` from that card. Do not assume numeric indices like ``slide.placeholders[1]`` and do not call ``pick_title_and_content_layout``.
+- For title-style layouts (TITLE + SUBTITLE, no BODY), the SUBTITLE placeholder is normal text; set its ``text`` (or build via ``text_frame``).
 - If the section markdown contains a **pipe table** (``|`` columns), use ``get_code_snippet`` with ``table_markdown_grid`` and build a native ``Table`` via ``add_table``. Do **not** paste the markdown table into ``body.text`` or a bullet list as plain text.
 - Save back to the same file: ``prs.save(str(TARGET_PPTX))``.
 - End with ``if __name__ == '__main__':`` calling one entry function.
@@ -423,6 +418,10 @@ INCREMENTAL SLIDE (H2) CONTRACT (orchestrator injects constants at the top of th
 """ + _SNIPPET_TOOL_RULES + """
 
 Call ``get_code_snippet`` with ``incremental_h2_skeleton`` for a minimal append-one-slide pattern."""
+
+
+# Backwards-compatible alias (legacy name imported elsewhere)
+SYSTEM_PROMPT_INCREMENTAL_H2 = SYSTEM_PROMPT_INCREMENTAL_SLIDE
 
 
 SYSTEM_PROMPT_LAYOUT_SELECTION = """You choose the best PowerPoint master slide layout for ONE content slide.
@@ -442,139 +441,219 @@ SELECTION HEURISTICS:
 
 HARD RULES:
 - `selected_layout_index` MUST be one of the allowed indices listed in the user message.
-- Do not output any markdown or extra fields; return only the structured object."""
+- Do not output any markdown or extra fields; return only the structured object.
+- Do not make up answer, use only provided information.
+"""
 
 # Bumped when `SYSTEM_PROMPT_LAYOUT_DESCRIBE` meaningfully changes (invalidates on-disk cache).
-LAYOUT_DESC_CACHE_PROMPT_VERSION = 1
+LAYOUT_DESC_CACHE_PROMPT_VERSION = 4
 
 SYSTEM_PROMPT_LAYOUT_DESCRIBE = """You describe ONE PowerPoint master slide layout for a downstream agent that will pick a layout per slide.
 
 Use the layout name, placeholder types, placeholder names (often human-readable), any prompt/placeholder text from the template (e.g. time ranges or \"Section header here\"), and rough bbox/geometry to infer the slide's *intent* (what it is for), not just placeholder counts.
 Do not equate a layout named \"Content\" with generic body text if prompt text and structure indicate a table of contents, agenda, or section list.
 
-Return only structured output (see response model). One English sentence, no markdown, at most 160 characters."""
+``content`` vs ``header`` (critical):
+- ``content`` — the slide is meant to carry **body material**: bullets, paragraphs, charts, tables, images, or freeform shapes. Count it as ``content`` if there is a BODY (or similar) **text/content placeholder**, **or** if there is **no** such placeholder but most of the canvas is **plain empty space** clearly intended for arbitrary content (e.g. only footer/date/slide-number chrome and a large blank area — still ``content``, not ``other``).
+- ``header`` — the slide is dominated by a **large centered title** (and maybe subtitle); it is **not** a general-purpose canvas for dense body copy. Decorative branding alone does not make it ``content`` if the layout's role is clearly a title/cover/section opener.
+
+You MUST set ``slide_type`` (structured field) to exactly one of:
+- ``header`` — title slide, cover, or section opener: dominant title/subtitle; not a body-content canvas.
+- ``agenda`` — table of contents, agenda, outline of upcoming sections.
+- ``content`` — body slide: content/text placeholder and/or large usable empty area for content as above.
+- ``other`` — does not fit the above (e.g. picture-with-caption only, vertical-title specialty). Use sparingly; do **not** use ``other`` for minimal-placeholder decks that are clearly meant for freeform body slides.
+
+You MUST set ``slide_has_image_placeholder`` (boolean): ``true`` if the layout has a dedicated **PICTURE** / image placeholder (a slot meant for a user-supplied photo or large graphic — check placeholder **type** names in the card, e.g. PICTURE). ``false`` if there is no such placeholder (text/body/subtitle only and/or blank canvas). Small fixed brand marks in the master are **not** a picture placeholder.
+
+Return only structured output (see response model). ``description``: one English sentence, no markdown, at most 160 characters.
+"""
 
 
 INCREMENTAL_H2_VALIDATION_FIX_TEMPLATE = """The slide script ran but incremental validation failed.
 
 {shared_block}
 
-VALIDATION ISSUES:
+<validation_issues>
 {issues}
+</validation_issues>
 
-CONTEXT:
-- Deck title (H1): {deck_title}
-- Slide section markdown:
+<deck_context>
+  <deck_title>{deck_title}</deck_title>
+</deck_context>
+
+<slide_markdown>
 {section_markdown}
+</slide_markdown>
 
-ORIGINAL CODE:
+<original_code>
 ```python
 {original_code}
 ```
+</original_code>
 
 INSTRUCTIONS:
 1. Fix the code so it still opens ``TARGET_PPTX``, appends exactly one slide, saves to ``TARGET_PPTX``, and uses ``shared`` for styling.
 2. Do not write ``SHARED_PY_PATH`` or change shared on disk.
 3. Use attribute names from the shared symbol index above exactly when referencing ``shared``.
-4. Call ``get_code_snippet`` if you need canonical python-pptx patterns.
-5. Return the complete corrected script (full file)."""
+4. Use ONLY the content inside <slide_markdown> as slide text; do NOT paste anything from <validation_issues>, <deck_context>, or any style/palette tables.
+5. Call ``get_code_snippet`` if you need canonical python-pptx patterns.
+6. Return the complete corrected script (full file)."""
 
 
-def format_incremental_h1_user_message(
-    preamble_markdown: str,
-    deck_title: str,
-    style_content: str | None,
-    language: str | None,
-    deck_from_template: bool = False,
+def format_shared_extend_user_message(
+    *, default_shared_py: str, style_content: str
 ) -> str:
-    """User message for H1: preamble markdown + deck title."""
-    parts = [
-        "Generate the H1 (title deck) step for an incremental build.",
-        "",
-        "Return a single Python program in `code` that imports python-pptx, writes `shared.py` via SHARED_PY_PATH.write_text, then opens and saves the deck at DECK_PPTX_PATH.",
-        "",
-    ]
-    if deck_from_template:
-        parts.extend(
-            [
-                "DECK SOURCE: The file at DECK_PPTX_PATH is a **copy of the user's template** `.pptx`. "
-                "It may already contain **multiple** slides (e.g. branding). Implement the H1 title block "
-                "by **editing** the most appropriate existing slide(s) — usually the first title slide — "
-                "without deleting template slides unless the task explicitly requires that.",
-                "",
-            ]
-        )
-    parts.extend(
-        [
-            f"Presentation title (from H1): {deck_title}",
-            "",
-            "## MARKDOWN FOR H1 (everything before the first `##`, including the `#` line):",
-            preamble_markdown,
-        ]
-    )
-    msg = "\n".join(parts)
-    return _append_chunk_style_language(
-        msg,
-        style_content,
-        language,
-        style_apply_line="Apply these consistently; encode reusable styling in shared.py.",
+    """User message for extending the default shared.py with style guidelines."""
+    return (
+        "Extend the DEFAULT shared.py module to encode the brand palette and any "
+        "reusable styling helpers implied by the STYLE GUIDELINES.\n"
+        "\n"
+        "Rules:\n"
+        "- Keep every name from the default (functions, constants).\n"
+        "- Add new RGBColor palette constants for brand colors using uppercase names.\n"
+        "- Allowed import: only `from pptx.dml.color import RGBColor`.\n"
+        "- Module must be importable as-is; no top-level I/O.\n"
+        "\n"
+        "## DEFAULT shared.py:\n"
+        "```python\n"
+        f"{default_shared_py}\n"
+        "```\n"
+        "\n"
+        "## STYLE GUIDELINES:\n"
+        f"{style_content}\n"
     )
 
 
-def format_incremental_h2_user_message(
+def format_shared_extend_fix_user_message(
+    *, prev_code: str, traceback: str
+) -> str:
+    """User message for fixing shared.py after verification failed."""
+    return (
+        "The shared.py module you produced fails verification. Fix it.\n"
+        "\n"
+        "Rules (unchanged):\n"
+        "- Keep every name from the original default module (functions, constants).\n"
+        "- Allowed import: only `from pptx.dml.color import RGBColor`.\n"
+        "- Module must parse and import cleanly with no top-level I/O.\n"
+        "\n"
+        "## VERIFICATION ERROR:\n"
+        "```text\n"
+        f"{traceback}\n"
+        "```\n"
+        "\n"
+        "## PREVIOUS shared.py:\n"
+        "```python\n"
+        f"{prev_code}\n"
+        "```\n"
+        "\n"
+        "Return the complete corrected module.\n"
+    )
+
+
+def format_incremental_slide_user_message(
     section_markdown: str,
     deck_title: str,
-    section_ordinal: int,
-    num_h2_slides: int,
     style_content: str | None,
     language: str | None,
     shared_index: str = "",
     *,
     chosen_layout: object | None = None,
 ) -> str:
-    """User message for one H2 slide: single section body."""
-    parts = [
-        "Generate one slide-append script for an incremental build.",
+    """
+    User message for one slide append (preamble or H2 — uniform contract).
+
+    Inputs are wrapped in XML-style tags so the model never confuses
+    instructions, the slide source markdown, the layout card, and the
+    shared-symbol index with each other. The raw ``style_content`` is
+    intentionally **not** embedded here: brand colors / palette are already
+    encoded in ``shared.py`` (see ``<shared_symbols>``); injecting the style
+    guide here causes the model to paste palette tables onto the slide.
+    """
+    parts: list[str] = [
+        "You build ONE slide. Use ONLY the markdown inside <slide_markdown> as",
+        "slide content. Do NOT include text from any other tag (deck title,",
+        "layout card, shared symbols, language directive) in slide shapes.",
+        "Brand palette is exposed via the `shared` module (see <shared_symbols>);",
+        "use those constants for colors and never paste palette tables onto slides.",
         "",
-        f"Deck title (context): {deck_title}",
-        f"Content slide {section_ordinal} of {num_h2_slides} (document order).",
+        "<deck_context>",
+        f"  <deck_title>{deck_title}</deck_title>",
+        "</deck_context>",
         "",
     ]
     if chosen_layout is not None:
-        # Avoid importing LayoutInfo here to keep prompts.py lightweight; the runner passes
-        # an object from layout_catalog that has `.index`, `.name`, and a formatter is
-        # applied before passing to the model. We embed a pre-formatted string block.
-        # The CodeGenerator will pass `chosen_layout_card_full` as a string via this param
-        # (see code_generator wiring).
+        # The orchestrator pre-formats the layout card; we embed it verbatim.
+        layout_block = str(chosen_layout).rstrip()
         parts.extend(
             [
-                "## SELECTED LAYOUT (already chosen by orchestrator — DO NOT pick another):",
-                str(chosen_layout).rstrip(),
+                "<chosen_layout note=\"already chosen by orchestrator — DO NOT pick another\">",
+                layout_block,
+                "</chosen_layout>",
                 "",
             ]
         )
     if shared_index.strip():
         parts.extend(
             [
-                "## CURRENT shared.py SYMBOL INDEX (source of truth for ``shared`` names):",
-                "```text",
+                "<shared_symbols note=\"exact names available on the `shared` module\">",
                 shared_index.strip(),
-                "```",
+                "</shared_symbols>",
+                "",
+            ]
+        )
+    if style_content and style_content.strip():
+        # We DO NOT include the raw style markdown — it is already encoded in
+        # shared.py. We only flag that a brand style applies, so the model
+        # prefers shared.* over hardcoded colors.
+        parts.extend(
+            [
+                "<style_note>",
+                "A brand style is in effect. Its palette is encoded in `shared.*`.",
+                "Do not embed the style guide as slide content; reference shared.* constants only.",
+                "</style_note>",
+                "",
+            ]
+        )
+    if language:
+        parts.extend(
+            [
+                "<language_requirement>",
+                f"All visible text on the slide MUST be in {language}.",
+                "</language_requirement>",
                 "",
             ]
         )
     parts.extend(
         [
-            "## SECTION MARKDOWN (one `##` slide):",
-            section_markdown,
+            "<slide_markdown>",
+            section_markdown.rstrip(),
+            "</slide_markdown>",
         ]
     )
-    msg = "\n".join(parts)
-    return _append_chunk_style_language(
-        msg,
-        style_content,
-        language,
-        style_apply_line="Match styling via the ``shared`` module; do not duplicate large palettes inline.",
+    return "\n".join(parts)
+
+
+# Backwards-compatible alias: the runner used to call this for H2 slides.
+def format_incremental_h2_user_message(
+    section_markdown: str,
+    deck_title: str,
+    section_ordinal: int,  # kept for backwards-compat (unused in slide message)
+    num_h2_slides: int,    # kept for backwards-compat (unused in slide message)
+    style_content: str | None,
+    language: str | None,
+    shared_index: str = "",
+    *,
+    chosen_layout: object | None = None,
+) -> str:
+    """Deprecated alias for :func:`format_incremental_slide_user_message`."""
+    del section_ordinal, num_h2_slides
+    return format_incremental_slide_user_message(
+        section_markdown=section_markdown,
+        deck_title=deck_title,
+        style_content=style_content,
+        language=language,
+        shared_index=shared_index,
+        chosen_layout=chosen_layout,
     )
 
 
@@ -634,10 +713,9 @@ def format_incremental_h2_validation_fix_prompt(
     """Validation fix prompt for a single H2 slide script."""
     if shared_index.strip():
         shared_block = (
-            "## CURRENT shared.py SYMBOL INDEX (source of truth for ``shared`` names):\n"
-            "```text\n"
+            "<shared_symbols note=\"exact names available on the `shared` module\">\n"
             f"{shared_index.strip()}\n"
-            "```\n"
+            "</shared_symbols>\n"
         )
     else:
         shared_block = ""
@@ -650,33 +728,3 @@ def format_incremental_h2_validation_fix_prompt(
     )
 
 
-INCREMENTAL_H1_VALIDATION_FIX_TEMPLATE = """The H1 deck script ran but validation failed.
-
-ORIGINAL CODE:
-```python
-{original_code}
-```
-
-ISSUES:
-{issues}
-
-H1 MARKDOWN (preamble only):
-{preamble_markdown}
-
-INSTRUCTIONS:
-1. Keep using ``DECK_PPTX_PATH`` and ``SHARED_PY_PATH`` from the injected header; do not remove the orchestrator prefix.
-2. Ensure ``SHARED_PY_PATH`` exists and contains importable Python helpers used for styling.
-3. Ensure the deck saved at ``DECK_PPTX_PATH`` reflects the H1 title block and opens correctly.
-4. Return the complete corrected script."""
-
-
-def format_incremental_h1_validation_fix_prompt(
-    original_code: str,
-    issues: list[str],
-    preamble_markdown: str,
-) -> str:
-    return INCREMENTAL_H1_VALIDATION_FIX_TEMPLATE.format(
-        original_code=original_code,
-        issues="\n".join(f"- {i}" for i in issues) if issues else "- (none)",
-        preamble_markdown=preamble_markdown,
-    )

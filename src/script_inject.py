@@ -9,20 +9,7 @@ def _path_literal(p: Path) -> str:
     return repr(str(p.resolve()))
 
 
-def inject_h1_paths(code: str, deck_pptx: Path, shared_py: Path) -> str:
-    """Inject DECK_PPTX_PATH and SHARED_PY_PATH for incremental H1 scripts."""
-    header = f"""# --- injected by orchestrator (do not remove) ---
-from pathlib import Path
-
-DECK_PPTX_PATH = Path({_path_literal(deck_pptx)})
-SHARED_PY_PATH = Path({_path_literal(shared_py)})
-# --- end injected ---
-
-"""
-    return header + code.lstrip("\n")
-
-
-def inject_h2_slide_paths(
+def inject_slide_paths(
     code: str,
     target_pptx: Path,
     shared_py: Path,
@@ -30,10 +17,13 @@ def inject_h2_slide_paths(
     chosen_layout_index: int | None = None,
 ) -> str:
     """
-    Inject TARGET_PPTX, SHARED_PY_PATH, and preload ``shared`` via importlib.
+    Inject TARGET_PPTX, SHARED_PY_PATH, optional CHOSEN_LAYOUT_INDEX, and
+    preload ``shared`` via importlib.
 
     Generated slide code should use ``shared`` for helpers and
-    ``Presentation(TARGET_PPTX)`` for the deck to modify.
+    ``Presentation(TARGET_PPTX)`` for the deck to modify. The same script is
+    used for the preamble (first slide on a 0-slide deck) and for every H2
+    slide; both append exactly one slide.
     """
     chosen = ""
     if chosen_layout_index is not None:
@@ -55,3 +45,7 @@ _orch_spec.loader.exec_module(shared)
 
 """
     return header + code.lstrip("\n")
+
+
+# Backwards-compatible alias
+inject_h2_slide_paths = inject_slide_paths

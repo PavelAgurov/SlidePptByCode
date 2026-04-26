@@ -199,7 +199,9 @@ def test_describe_layout_does_not_mutate_conversation_history(
     generator: CodeGenerator, mock_llm_client: Mock
 ) -> None:
     mock_llm_client.generate_structured.return_value = LayoutDescription(
-        description="Agenda-style layout with timed rows."
+        slide_type="agenda",
+        slide_has_image_placeholder=False,
+        description="Agenda-style layout with timed rows.",
     )
     generator.conversation_history = [{"role": "system", "content": "SYS"}]
     li = LayoutInfo(index=2, name="Agenda", placeholders=())
@@ -207,6 +209,54 @@ def test_describe_layout_does_not_mutate_conversation_history(
     assert "Agenda" in out.description
     assert len(generator.conversation_history) == 1
     mock_llm_client.generate_structured.assert_called_once()
+
+
+def test_extend_shared_module_no_style_returns_default_without_llm_call(
+    generator: CodeGenerator, mock_llm_client: Mock
+) -> None:
+    from src.shared_default import DEFAULT_SHARED_PY
+
+    out = generator.extend_shared_module(None)
+    assert out == DEFAULT_SHARED_PY
+    out2 = generator.extend_shared_module("   \n  ")
+    assert out2 == DEFAULT_SHARED_PY
+    mock_llm_client.generate_structured.assert_not_called()
+    mock_llm_client.generate_structured_with_snippet_tools.assert_not_called()
+
+
+def test_extend_shared_module_with_style_calls_llm(
+    generator: CodeGenerator, mock_llm_client: Mock
+) -> None:
+    from src.models import SharedModuleCode
+
+    mock_llm_client.generate_structured.return_value = SharedModuleCode(
+        code="from pptx.dml.color import RGBColor\nELF_GREEN = RGBColor(0x76, 0xCC, 0xBE)\n",
+        explanation="ok",
+    )
+    out = generator.extend_shared_module("Brand: #76CCBE elf green")
+    assert "ELF_GREEN" in out
+    mock_llm_client.generate_structured.assert_called_once()
+
+
+def test_fix_shared_module_appends_to_history(
+    generator: CodeGenerator, mock_llm_client: Mock
+) -> None:
+    from src.models import SharedModuleCode
+
+    generator.conversation_history = [
+        {"role": "system", "content": "SYS"},
+        {"role": "user", "content": "U"},
+    ]
+    mock_llm_client.generate_structured.return_value = SharedModuleCode(
+        code="from pptx.dml.color import RGBColor\nWHITE = RGBColor(255,255,255)\n",
+        explanation="fixed",
+    )
+    out = generator.fix_shared_module("BAD CODE", "SyntaxError: ...")
+    assert "WHITE" in out
+    assert len(generator.conversation_history) == 4
+    last_user = generator.conversation_history[2]["content"]
+    assert "VERIFICATION ERROR" in last_user
+    assert "BAD CODE" in last_user
 
 
 def test_select_layout_passes_descriptions_to_user_message(

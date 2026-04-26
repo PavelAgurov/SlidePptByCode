@@ -101,13 +101,32 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--template_layout_h1",
+        default=None,
+        metavar="NAME",
+        help=(
+            "Force using a specific layout (by name) for the H1/preamble slide; "
+            "skips LLM layout selection for it. Works with or without --template "
+            "(uses python-pptx default layouts when --template is omitted)."
+        ),
+    )
+    parser.add_argument(
+        "--template_layout_h2",
+        default=None,
+        metavar="NAME",
+        help=(
+            "Force using a specific layout (by name) for every H2 content slide; "
+            "skips LLM layout selection. Works with or without --template "
+            "(uses python-pptx default layouts when --template is omitted)."
+        ),
+    )
+    parser.add_argument(
         "--template_layout",
         default=None,
         metavar="NAME",
         help=(
-            "Force using a specific slide layout name from the --template master layouts "
-            "for all generated H2 slides (skips LLM layout selection). "
-            "Errors if the name is not found in the template or if --template is not set."
+            "[deprecated] Alias for --template_layout_h2. Cannot be combined with the "
+            "newer --template_layout_h1/--template_layout_h2 flags."
         ),
     )
     parser.add_argument(
@@ -115,11 +134,24 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=None,
         metavar="N",
-        help="Maximum number of H2 (##) content slides to generate; omit for all. Partial runs skip full-deck validation.",
+        help=(
+            "Maximum number of H2 (##) content slides to generate (the H1/preamble "
+            "slide is always generated and not counted). Omit for all H2 slides. "
+            "Partial runs skip full-deck validation."
+        ),
     )
     args = parser.parse_args()
     if args.slide_max is not None and args.slide_max < 0:
         parser.error("--slide_max must be non-negative")
+    if args.template_layout is not None and (
+        args.template_layout_h1 is not None or args.template_layout_h2 is not None
+    ):
+        parser.error(
+            "--template_layout (deprecated) cannot be combined with "
+            "--template_layout_h1 / --template_layout_h2; use the new flags."
+        )
+    if args.template_layout is not None and args.template_layout_h2 is None:
+        args.template_layout_h2 = args.template_layout
     return args
 
 
@@ -240,9 +272,6 @@ def main() -> int:
                     "Output path matches the template path; use a different "
                     "--output so the template file is not overwritten."
                 )
-        if args.template_layout and not args.template:
-            raise ValueError("--template_layout requires --template")
-
         # Initialize components
         llm_client = LLMClient(config)
         generator = CodeGenerator(llm_client)
@@ -254,7 +283,8 @@ def main() -> int:
             language=args.lang,
             output_filename=output_filename,
             template_pptx=template_pptx,
-            template_layout=args.template_layout,
+            forced_layout_h1=args.template_layout_h1,
+            forced_layout_h2=args.template_layout_h2,
             generator=generator,
             executor=executor,
             config=config,

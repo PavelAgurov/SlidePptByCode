@@ -1,7 +1,7 @@
 """Pydantic models for structured data and LLM responses."""
 
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -52,6 +52,19 @@ class IncrementalLlmScriptCode(BaseModel):
     )
 
 
+class SharedModuleCode(BaseModel):
+    """Structured LLM output for the shared.py helper module."""
+
+    code: str = Field(
+        description=(
+            "Complete Python source for the shared.py module. Must keep all symbols "
+            "from the provided default and may add palette constants. Only allowed "
+            "import: `from pptx.dml.color import RGBColor`."
+        )
+    )
+    explanation: str = Field(default="", description="Brief note on the changes")
+
+
 class ChunkedSectionGeneratedCode(BaseModel):
     """Single H2-section fragment for chunked generation (no full script)."""
 
@@ -66,6 +79,18 @@ class ChunkedSectionGeneratedCode(BaseModel):
 
 class LayoutDescription(BaseModel):
     """Structured output for one slide layout: short intent summary for later selection."""
+    
+    slide_type: Literal["header", "agenda", "content", "other"] = Field(
+        description=(
+            "header: dominant title/cover/section opener; agenda: TOC/agenda list; "
+            "content: body slide (content placeholder and/or large empty canvas for material); "
+            "other: rare edge cases only"
+        )
+    )
+    
+    slide_has_image_placeholder: bool = Field(
+        description="Whether the slide has an image placeholder"
+    )
 
     description: str = Field(
         description="One short sentence (<=160 chars) describing the layout intent / typical use"

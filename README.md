@@ -83,11 +83,33 @@ python src/main.py data/data01.md --max-retries 5
 # Custom execution timeout
 python src/main.py data/data01.md --timeout 120
 
+# Limit how many H2 (##) content slides to generate (preamble/H1 always runs)
+python src/main.py data/data01.md --slide_max 3
+
+# Use a branded .pptx as the layout source (existing slides are stripped;
+# masters/layouts are kept)
+python src/main.py data/data01.md --template templates/brand.pptx
+
+# Force a specific layout name (works with or without --template; without
+# --template, names come from python-pptx defaults like "Title Slide",
+# "Title and Content", "Section Header", ...)
+python src/main.py data/data01.md \
+    --template_layout_h1 "Title Slide" \
+    --template_layout_h2 "Title and Content"
+
 # Combine multiple options
 python src/main.py data/data01.md --style styles/style.md --model "gpt-4.1" --verbose
 ```
 
 On **Windows PowerShell**, unquoted model names that contain `-` (for example `gpt-4.1`) can be parsed as expressions instead of a single argument. Use quotes as above, or a single token such as `--model=gpt-4.1`.
+
+#### Layout selection flags
+
+- `--template FILE` — copy a `.pptx` and use its master layouts. The runner strips any pre-existing slides from the copy, so the deck always starts with **0 slides** and only your master layouts are kept.
+- `--template_layout_h1 NAME` — force a layout by name for the **H1/preamble slide** (skips LLM layout selection for it). Works with or without `--template`. Without `--template`, the name must match a python-pptx default layout (e.g. `Title Slide`, `Title Only`).
+- `--template_layout_h2 NAME` — force a layout by name for **every H2 content slide**. Same rules as above.
+- `--template_layout NAME` — *deprecated* alias for `--template_layout_h2`. Cannot be combined with the new `_h1`/`_h2` flags.
+- `--slide_max N` — limit the number of H2 slides generated. The H1/preamble slide is always produced and is **not** counted; partial runs skip full-deck validation against the task spec.
 
 ### Style Guidelines
 
@@ -277,15 +299,27 @@ python -m pytest tests/ -v --cov=src --cov-report=html
 
 ## How It Works
 
-### Pipeline Overview
+### Pipeline Overview (incremental, slide-by-slide)
 
-1. **Load Configuration**: Read settings from `.env`
-2. **Parse Task**: Read input file and extract presentation requirements
-3. **Generate Code**: LLM creates python-pptx code based on specifications
-4. **Execute Code**: Run generated code in isolated subprocess
-5. **Validate Output**: Check slide count, titles, file existence
-6. **Retry on Error**: If execution or validation fails, send error details back to LLM for fixing
-7. **Save Results**: Store generated code in `.generated/`, presentation in `.output/`
+The CLI runs a **unified incremental pipeline**: every slide — including the H1 / preamble — is appended to the deck by its own LLM-generated script with the exact same contract.
+
+1. **Load configuration** from `.env`.
+2. **Parse and chunk the task**: H1 preamble + one chunk per `##` heading.
+3. **Initialize the deck with 0 slides**: either save a fresh empty `.pptx` (default python-pptx layouts) or copy `--template` and strip all of its existing slides. Only master layouts survive.
+4. **Read layouts** from the deck and (optionally) cache one-line LLM descriptions for each layout (cached on disk under `.generated/layout/`). Default python-pptx layouts are cached under `default-pptx.json`.
+5. **Generate `shared.py`** once for the whole run:
+   - With no `--style`: write a hardcoded default module verbatim (no LLM call).
+   - With `--style`: ask the LLM to **extend** the default with brand-specific palette constants while keeping every default symbol.
+   - Then verify the resulting file with `ast.parse` + `importlib.exec_module` and check that all required default symbols are still present. On failure, retry with `fix_shared_module` up to `--max-retries`. Failure aborts the run before any slide is generated.
+6. **Slide loop** (preamble first, then each H2 chunk in order). For every chunk:
+   1. Pick a layout — either the forced `--template_layout_h1` / `--template_layout_h2`, or LLM layout selection (with two attempts; failure on the preamble aborts the run because there is no safe default fallback for title-only layouts).
+   2. Generate a per-slide append script with the orchestrator-injected `TARGET_PPTX`, `SHARED_PY_PATH`, and `CHOSEN_LAYOUT_INDEX`.
+   3. Run on a **scratch copy** of the deck and validate that exactly one slide was appended and has readable content.
+   4. Run on the real deck, validate, and fall back to a `.bak` copy on failure.
+   5. Confirm `shared.py` was not modified by the slide script.
+   6. Retry on any failure up to `--max-retries` with full traceback / validation issues fed back to the LLM.
+7. **Final validation** of the deck against the task spec (skipped when `--slide_max` produces a partial run).
+8. **Save results**: generated scripts in `.generated/`, the deck in `.output/`, full agent log in `.logs/agent.log`.
 
 ### Error Recovery
 
