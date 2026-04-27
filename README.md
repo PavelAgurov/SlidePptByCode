@@ -4,7 +4,7 @@ An LLM-powered agent that generates PowerPoint presentations from text specifica
 
 ## Overview
 
-This tool takes a text/markdown description of a presentation and uses GPT-4.1 (via OpenRouter) to:
+This tool takes a text/markdown description of a presentation and uses a configurable chat model via **OpenRouter** (default in config: `gpt-4.1-mini`) to:
 1. Generate Python code using python-pptx library
 2. Execute the code to create a .pptx file
 3. Validate the output (slide count, titles)
@@ -36,17 +36,19 @@ git clone <repository-url>
 cd SlidePptCode
 ```
 
-2. Create and activate virtual environment:
+2. Create a virtual environment (one-time; needs any Python 3.12+ on your PATH):
 ```bash
 python -m venv .venv
-.venv\Scripts\activate  # Windows
-# or
-source .venv/bin/activate  # Unix/macOS
 ```
 
-3. Install dependencies:
+3. Install dependencies (always use the venv interpreter):
+```powershell
+# Windows (PowerShell)
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
 ```bash
-pip install -r requirements.txt
+# macOS / Linux
+./.venv/bin/python -m pip install -r requirements.txt
 ```
 
 4. Configure environment:
@@ -59,46 +61,62 @@ cp .env.example .env
 
 ### Basic Usage
 
-Generate a presentation from a task file:
+Generate a presentation from a task file. Example markdown and styles live under **`data_sample/`** (for example `data_sample/data01.md`). Unit tests still use `tests/fixtures/sample_task.md`; your own decks can live anywhere (e.g. a local `data/` folder).
 
-```bash
-python src/main.py data/data01.md
+**Windows (PowerShell):**
+```powershell
+.\.venv\Scripts\python.exe src\main.py data_sample\data01.md
 ```
+
+**macOS / Linux:**
+```bash
+./.venv/bin/python src/main.py data_sample/data01.md
+```
+
+Unless you pass `--output`, the deck is written to **`.output/presentation.pptx`**.
 
 ### Advanced Options
 
-```bash
-# Enable verbose logging
-python src/main.py data/data01.md --verbose
+```powershell
+# Windows — same pattern: .\.venv\Scripts\python.exe src\main.py <TASK> [flags]
 
-# Apply style guidelines
-python src/main.py data/data01.md --style styles/style.md
+# Enable verbose logging
+.\.venv\Scripts\python.exe src\main.py data_sample\data01.md --verbose
+
+# Output file name (under .output/ if you pass a bare name)
+.\.venv\Scripts\python.exe src\main.py data_sample\data01.md --output my_deck.pptx
+
+# Language hint for slide content (passed into the LLM prompt)
+.\.venv\Scripts\python.exe src\main.py data_sample\data01.md --lang Russian
+
+# Apply style guidelines (repo sample)
+.\.venv\Scripts\python.exe src\main.py data_sample\data01.md --style data_sample\style.md
 
 # Use different model
-python src/main.py data/data01.md --model "gpt-4.1"
+.\.venv\Scripts\python.exe src\main.py data_sample\data01.md --model "gpt-4.1"
 
 # Custom retry limit
-python src/main.py data/data01.md --max-retries 5
+.\.venv\Scripts\python.exe src\main.py data_sample\data01.md --max-retries 5
 
 # Custom execution timeout
-python src/main.py data/data01.md --timeout 120
+.\.venv\Scripts\python.exe src\main.py data_sample\data01.md --timeout 120
 
 # Limit how many H2 (##) content slides to generate (preamble/H1 always runs)
-python src/main.py data/data01.md --slide_max 3
+.\.venv\Scripts\python.exe src\main.py data_sample\data01.md --slide_max 3
 
-# Use a branded .pptx as the layout source (existing slides are stripped;
-# masters/layouts are kept)
-python src/main.py data/data01.md --template templates/brand.pptx
+# Use a branded .pptx as the layout source (deck is copied to the output path,
+# all slides removed; masters/layouts kept; the original template file is not modified)
+.\.venv\Scripts\python.exe src\main.py data_sample\data01.md --template path\to\brand.pptx
 
 # Force a specific layout name (works with or without --template; without
 # --template, names come from python-pptx defaults like "Title Slide",
 # "Title and Content", "Section Header", ...)
-python src/main.py data/data01.md \
-    --template_layout_h1 "Title Slide" \
+.\.venv\Scripts\python.exe src\main.py data_sample\data01.md `
+    --template_layout_h1 "Title Slide" `
     --template_layout_h2 "Title and Content"
 
 # Combine multiple options
-python src/main.py data/data01.md --style styles/style.md --model "gpt-4.1" --verbose
+.\.venv\Scripts\python.exe src\main.py data_sample\data01.md --style data_sample\style-epam.md --model "gpt-4.1" --verbose
 ```
 
 On **Windows PowerShell**, unquoted model names that contain `-` (for example `gpt-4.1`) can be parsed as expressions instead of a single argument. Use quotes as above, or a single token such as `--model=gpt-4.1`.
@@ -115,7 +133,7 @@ On **Windows PowerShell**, unquoted model names that contain `-` (for example `g
 
 The `--style` parameter allows you to specify visual and content style guidelines for the presentation. This is useful for maintaining brand consistency or applying specific formatting rules.
 
-**Example style file** (`styles/style.md`):
+**Example style file** (repo sample: `data_sample/style.md`):
 ```markdown
 Use string MS Office styles
 Slides should be readable.
@@ -168,7 +186,7 @@ Final remarks...
 If this structure is missing or the first `##` appears before the first `#`, the program exits with a clear `ValueError` (no single-pass fallback). Chunking is always on; a previous `--chunk-by-h2` CLI flag is removed.
 
 The tool will:
-- Parse `## Slide N` markers to determine expected slide count
+- Parse each top-level `## ...` heading as one content slide and count H2 sections for validation
 - Extract titles and content for each slide
 - Generate appropriate python-pptx code
 - Create the presentation in `.output/` directory
@@ -195,7 +213,9 @@ You can specify chart type in two ways:
 - `chart: area` - Area chart
 - `chart: scatter` - Scatter plot
 
-**Example with charts** (`data/charts_example.md`):
+**Example with charts:** the repo includes **`data_sample/data03_charts_test.md`** (three slides with `chart:` directives and CSV). Open that file for the full markdown.
+
+Minimal shape (see `data_sample/data03_charts_test.md` for complete CSV blocks):
 
 ```markdown
 # Sales Dashboard
@@ -205,34 +225,12 @@ You can specify chart type in two ways:
 chart: line_markers
 
 month,product_A,product_B,product_C
-2025-01,120000,95000,60000
-2025-02,135000,102000,72000
-2025-03,150000,110000,80000
-2025-04,170000,130000,95000
-
-## Slide 2 — Market Share
-
-chart: pie
-
-product,percentage
-Product A,45
-Product B,30
-Product C,25
-
-## Slide 3 — Quarterly Performance
-
-chart: column_stacked
-
-quarter,revenue,costs
-Q1,355000,297000
-Q2,515000,395000
-Q3,605000,460000
-Q4,720000,550000
+2026-01,120000,95000,60000
 ```
 
-Generate the presentation:
-```bash
-python src/main.py data/charts_example.md --style styles/style-epam.md
+Generate (optional EPAM-oriented style sample):
+```powershell
+.\.venv\Scripts\python.exe src\main.py data_sample\data03_charts_test.md --style data_sample\style-epam.md
 ```
 
 When using style guidelines, chart colors automatically match your brand colors for consistency.
@@ -242,24 +240,43 @@ When using style guidelines, chart colors automatically match your brand colors 
 ```
 SlidePptCode/
 ├── src/
-│   ├── main.py              # CLI entry point and orchestration
-│   ├── config.py            # Configuration management (pydantic-settings)
-│   ├── models.py            # Pydantic models for structured output
-│   ├── llm_client.py        # OpenRouter/OpenAI client wrapper
-│   ├── code_generator.py    # Code generation and error fixing logic
-│   ├── code_executor.py     # Safe code execution in subprocess
-│   ├── validator.py         # Presentation validation
-│   └── prompts.py           # System prompts and templates
+│   ├── main.py                 # CLI entry point
+│   ├── incremental_runner.py   # Slide-by-slide pipeline orchestration
+│   ├── config.py               # Settings (pydantic-settings)
+│   ├── models.py               # Pydantic models for LLM structured output
+│   ├── llm_client.py           # OpenRouter-compatible client
+│   ├── code_generator.py       # Prompting, codegen, retries
+│   ├── code_executor.py        # Subprocess execution with timeout
+│   ├── validator.py            # Deck vs. task validation
+│   ├── prompts.py              # System prompts and templates
+│   ├── task_chunker.py         # Markdown → H1 / H2 chunks
+│   ├── ppt_bootstrap.py        # Empty deck or template copy + strip slides
+│   ├── layout_catalog.py       # Read layouts from a .pptx
+│   ├── layout_describer.py     # LLM one-line descriptions per layout
+│   ├── shared_default.py       # Default shared.py source (no --style)
+│   ├── shared_index.py         # Helpers for shared module handling
+│   ├── script_inject.py        # Inject paths into generated slide scripts
+│   ├── snippets.py             # Small reusable prompt/code fragments
+│   ├── code_merger.py          # Legacy / helper merge utilities
+│   └── colored_logging.py      # Console log colors
 ├── tests/
-│   ├── test_*.py            # Unit tests
-│   └── fixtures/            # Test data
-├── data/                    # Input task specifications
-├── .generated/              # Generated Python code (auto-created)
-├── .output/                 # Generated .pptx files (auto-created)
-├── .logs/                   # Application logs (auto-created)
-├── .env                     # Environment configuration
-└── requirements.txt         # Python dependencies
+│   ├── test_*.py               # Unit tests
+│   └── fixtures/               # sample_task.md (used by tests, not the main demos)
+├── data_sample/                # Example tasks + styles (safe to run with the CLI)
+│   ├── data01.md               # Longer narrative / financial-style deck
+│   ├── data02.md               # Short example with CSV table
+│   ├── data03_charts_test.md   # chart: directives + charts
+│   ├── style.md, style2.md     # Generic style guideline samples
+│   └── style-epam.md           # Brand-oriented style sample
+├── .generated/                 # Generated slide scripts + shared.py (auto-created)
+├── .output/                    # Generated .pptx (+ _scratch/ during runs)
+├── .logs/                      # agent.log (auto-created)
+├── .env                        # Your secrets (not committed)
+├── .env.example                # OPENROUTER_API_KEY placeholder
+└── requirements.txt            # Python dependencies
 ```
+
+Optional: add your own `data/`, `styles/`, or `templates/` folders; the shipped **`data_sample/`** tree is enough to try the tool without creating paths.
 
 ## Configuration
 
@@ -286,15 +303,23 @@ EXECUTION_TIMEOUT=60
 
 ### Run Tests
 
-```bash
-# All tests
-python -m pytest tests/ -v
+Use the project virtual environment (see workspace rules):
 
-# Specific test file
-python -m pytest tests/test_validator.py -v
+```powershell
+# Windows — all tests
+.\.venv\Scripts\pytest.exe
+
+# One file
+.\.venv\Scripts\pytest.exe tests\test_validator.py -v
 
 # With coverage
-python -m pytest tests/ -v --cov=src --cov-report=html
+.\.venv\Scripts\pytest.exe tests -v --cov=src --cov-report=html
+```
+
+```bash
+# macOS / Linux
+./.venv/bin/pytest
+./.venv/bin/pytest tests/test_validator.py -v
 ```
 
 ## How It Works
@@ -332,25 +357,25 @@ The agent implements a smart retry loop:
 
 ### Structured Output
 
-Uses Pydantic models with OpenAI's structured output feature:
+Uses Pydantic models with the OpenAI-compatible **structured outputs** / JSON-schema style responses from the API. The incremental pipeline mainly uses:
 
-```python
-class GeneratedCode(BaseModel):
-    code: str                      # Complete Python code
-    explanation: str                # Approach description
-    expected_output_filename: str   # Expected .pptx filename
-```
+- **`IncrementalLlmScriptCode`** — one Python file per H1 or H2 slide append
+- **`SharedModuleCode`** — optional brand extensions for `.generated/shared.py` when `--style` is set
+- **`LayoutDescription`** / **`LayoutSelection`** — layout catalog text and per-slide layout choice
 
-This ensures reliable, parseable responses from the LLM.
+Legacy / other flows may still use **`GeneratedCode`** (full script with `code`, `explanation`, `expected_output_filename`).
 
 ## Examples
 
 ### Example 1: Simple Presentation
 
-Input (`data/simple.md`):
+Task files must include an **H1** line before any **H2** slide (see [Input Format](#input-format)). Example:
+
 ```markdown
+# My Presentation
+
 ## Slide 1 — Title
-**Title:** My Presentation
+**Title:** Welcome
 
 ## Slide 2 — Content
 **Title:** Main Point
@@ -358,11 +383,18 @@ Input (`data/simple.md`):
 - Item 2
 ```
 
-Output: `simple_presentation.pptx` with 2 slides
+Default output: **`.output/presentation.pptx`** (three slides: H1 preamble plus two H2 slides). Use `--slide_max 1` if you only want the preamble plus one H2.
 
-### Example 2: Complex Presentation
+### Example 2: Shipped samples in `data_sample/`
 
-See `data/data01.md` for a full example (8 slides with financial data, tables, formatting).
+| File | Purpose |
+|------|---------|
+| `data_sample/data01.md` | Larger deck (multiple H2 sections, narrative + metrics) |
+| `data_sample/data02.md` | Short task with a CSV block |
+| `data_sample/data03_charts_test.md` | Charts via `chart:` + CSV |
+| `data_sample/style.md`, `style2.md`, `style-epam.md` | Use with `--style …` |
+
+For automated tests only, the minimal markdown fixture is `tests/fixtures/sample_task.md`.
 
 ## Troubleshooting
 
@@ -390,14 +422,14 @@ Solution: Check input file slide markers or increase `--max-retries`
 ```
 ModuleNotFoundError: No module named 'pptx'
 ```
-Solution: Ensure virtual environment is activated and dependencies installed
+Solution: Install dependencies with the venv interpreter (`python -m pip install -r requirements.txt` inside the venv, or `.\.venv\Scripts\python.exe -m pip install -r requirements.txt` on Windows).
 
 ### Debug Mode
 
 Enable verbose logging to see detailed execution flow:
 
-```bash
-python src/main.py data/data01.md --verbose
+```powershell
+.\.venv\Scripts\python.exe src\main.py data_sample\data01.md --verbose
 ```
 
 Check logs in `.logs/agent.log` for full details.

@@ -35,6 +35,5 @@ htmlcov/
 .env
 .env.local
 /.claude/settings.local.json
-/data
 /styles
 /.cursor/plans
