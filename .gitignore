@@ -37,3 +37,4 @@ htmlcov/
 /.claude/settings.local.json
 /styles
 /.cursor/plans
+/data
