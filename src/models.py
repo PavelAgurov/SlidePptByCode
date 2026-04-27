@@ -92,6 +92,16 @@ class LayoutDescription(BaseModel):
         description="Whether the slide has an image placeholder"
     )
 
+    content_zones_count: int = Field(
+        ge=1,
+        description=(
+            "Distinct visual content regions on the layout: 1 = single canvas "
+            "(blank or one body placeholder); 2 = clear split (two columns / halves, "
+            "or one body + one picture / decorative panel); 3+ = N top-level regions. "
+            "Footer / logo / slide-number chrome do NOT count."
+        ),
+    )
+
     description: str = Field(
         description="One short sentence (<=160 chars) describing the layout intent / typical use"
     )

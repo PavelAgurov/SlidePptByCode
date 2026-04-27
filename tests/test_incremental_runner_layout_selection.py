@@ -46,6 +46,7 @@ def _describe_layout_by_index(li: LayoutInfo) -> LayoutDescription:
     return LayoutDescription(
         slide_type=st,  # type: ignore[arg-type]
         slide_has_image_placeholder=False,
+        content_zones_count=1,
         description="d",
     )
 
@@ -295,11 +296,13 @@ def test_h1_uses_only_header_layouts_in_selection(
             return LayoutDescription(
                 slide_type="content",
                 slide_has_image_placeholder=False,
+                content_zones_count=1,
                 description="body",
             )
         return LayoutDescription(
             slide_type="header",
             slide_has_image_placeholder=False,
+            content_zones_count=1,
             description="title",
         )
 
@@ -352,6 +355,7 @@ def test_h2_excludes_header_and_other(
         return LayoutDescription(
             slide_type=st,  # type: ignore[arg-type]
             slide_has_image_placeholder=False,
+            content_zones_count=1,
             description=f"idx{li.index}",
         )
 
@@ -396,17 +400,20 @@ def test_h2_excludes_layouts_with_image_placeholder(
             return LayoutDescription(
                 slide_type="header",
                 slide_has_image_placeholder=False,
+                content_zones_count=1,
                 description="h",
             )
         if li.index == 1:
             return LayoutDescription(
                 slide_type="content",
                 slide_has_image_placeholder=True,
+                content_zones_count=2,
                 description="picture slot",
             )
         return LayoutDescription(
             slide_type="content",
             slide_has_image_placeholder=False,
+            content_zones_count=1,
             description="text only",
         )
 
@@ -451,17 +458,20 @@ def test_other_layout_never_offered(
             return LayoutDescription(
                 slide_type="header",
                 slide_has_image_placeholder=False,
+                content_zones_count=1,
                 description="h1",
             )
         if li.index == 3:
             return LayoutDescription(
                 slide_type="content",
                 slide_has_image_placeholder=False,
+                content_zones_count=1,
                 description="h2 body",
             )
         return LayoutDescription(
             slide_type="other",
             slide_has_image_placeholder=False,
+            content_zones_count=1,
             description="skip",
         )
 
@@ -508,6 +518,7 @@ def test_empty_filter_for_preamble_aborts(
         return LayoutDescription(
             slide_type="content",
             slide_has_image_placeholder=False,
+            content_zones_count=1,
             description="no headers",
         )
 
@@ -534,3 +545,52 @@ def test_empty_filter_for_preamble_aborts(
     )
     assert ok is False
     assert any("Preamble layout selection failed" in e for e in errs)
+
+
+def test_h2_select_layout_passes_full_layout_descriptions_with_zones(
+    monkeypatch: pytest.MonkeyPatch, mock_config: SimpleNamespace, tmp_path: Path
+) -> None:
+    """Selection prompt receives dict[int, LayoutDescription] including content_zones_count."""
+    task = "# Title\n\n## Slide 1\n- A\n"
+    generator = _make_generator()
+
+    def _describe(li: LayoutInfo) -> LayoutDescription:
+        z = 2 if li.index == 2 else 1
+        return LayoutDescription(
+            slide_type="header" if li.index == 0 else "content",
+            slide_has_image_placeholder=False,
+            content_zones_count=z,
+            description=f"L{li.index}",
+        )
+
+    generator.describe_layout.side_effect = _describe
+    executor = _Executor()
+    _patch_validators(monkeypatch)
+    monkeypatch.setattr(
+        "src.incremental_runner.read_layouts",
+        lambda *_a, **_k: [
+            LayoutInfo(index=0, name="H", placeholders=()),
+            LayoutInfo(index=1, name="B1", placeholders=()),
+            LayoutInfo(index=2, name="B2", placeholders=()),
+        ],
+    )
+
+    ok, _deck, _errs = run_incremental_pipeline(
+        task_content=task,
+        style_content=None,
+        language=None,
+        output_filename=str(tmp_path / "out.pptx"),
+        generator=generator,
+        executor=executor,  # type: ignore[arg-type]
+        config=mock_config,  # type: ignore[arg-type]
+        max_retries=1,
+        slide_max=None,
+        template_pptx=None,
+    )
+    assert ok is True
+    h2_call = generator.select_layout.call_args_list[1]
+    descs = h2_call.kwargs["descriptions"]
+    assert set(descs.keys()) == {1, 2}
+    assert isinstance(descs[1], LayoutDescription)
+    assert descs[1].content_zones_count == 1
+    assert descs[2].content_zones_count == 2

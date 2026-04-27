@@ -26,10 +26,12 @@ def _ld(
     description: str,
     *,
     slide_has_image_placeholder: bool = False,
+    content_zones_count: int = 1,
 ) -> LayoutDescription:
     return LayoutDescription(
         slide_type=slide_type,  # type: ignore[arg-type]
         slide_has_image_placeholder=slide_has_image_placeholder,
+        content_zones_count=content_zones_count,
         description=description,
     )
 
@@ -67,6 +69,7 @@ def test_load_cached_empty_when_missing_or_bad_sha(tmp_path: Path) -> None:
                         "name": "L",
                         "slide_type": "header",
                         "slide_has_image_placeholder": False,
+                        "content_zones_count": 1,
                         "description": "d",
                     }
                 ],
@@ -113,6 +116,7 @@ def test_load_cached_ok_partial_indices(tmp_path: Path) -> None:
                         "name": "A",
                         "slide_type": "header",
                         "slide_has_image_placeholder": False,
+                        "content_zones_count": 1,
                         "description": "one",
                     },
                     {
@@ -120,6 +124,7 @@ def test_load_cached_ok_partial_indices(tmp_path: Path) -> None:
                         "name": "B",
                         "slide_type": "content",
                         "slide_has_image_placeholder": True,
+                        "content_zones_count": 2,
                         "description": "two",
                     },
                 ],
@@ -129,7 +134,7 @@ def test_load_cached_ok_partial_indices(tmp_path: Path) -> None:
     )
     assert load_cached(c, sha) == {
         0: _ld("header", "one"),
-        1: _ld("content", "two", slide_has_image_placeholder=True),
+        1: _ld("content", "two", slide_has_image_placeholder=True, content_zones_count=2),
     }
 
 
@@ -151,6 +156,7 @@ def test_load_cached_skips_row_missing_slide_type(tmp_path: Path) -> None:
                         "name": "B",
                         "slide_type": "content",
                         "slide_has_image_placeholder": False,
+                        "content_zones_count": 1,
                         "description": "ok",
                     },
                 ],
@@ -188,6 +194,7 @@ def test_load_cached_skips_row_missing_slide_has_image_placeholder(
                         "name": "B",
                         "slide_type": "content",
                         "slide_has_image_placeholder": False,
+                        "content_zones_count": 1,
                         "description": "ok",
                     },
                 ],
@@ -197,6 +204,51 @@ def test_load_cached_skips_row_missing_slide_has_image_placeholder(
     )
     assert load_cached(c, sha) == {
         1: _ld("content", "ok"),
+    }
+
+
+def test_load_cached_skips_row_missing_content_zones_count(tmp_path: Path) -> None:
+    t = tmp_path / "a.pptx"
+    Presentation().save(str(t))
+    sha = template_sha256(t)
+    c = tmp_path / ".generated" / "layout" / "a.json"
+    c.parent.mkdir(parents=True, exist_ok=True)
+    c.write_text(
+        json.dumps(
+            {
+                "template_sha256": sha,
+                "prompt_version": LAYOUT_DESC_CACHE_PROMPT_VERSION,
+                "layouts": [
+                    {
+                        "index": 0,
+                        "name": "A",
+                        "slide_type": "content",
+                        "slide_has_image_placeholder": False,
+                        "description": "no zones field",
+                    },
+                    {
+                        "index": 1,
+                        "name": "B",
+                        "slide_type": "content",
+                        "slide_has_image_placeholder": False,
+                        "content_zones_count": 0,
+                        "description": "invalid zones",
+                    },
+                    {
+                        "index": 2,
+                        "name": "C",
+                        "slide_type": "content",
+                        "slide_has_image_placeholder": False,
+                        "content_zones_count": 1,
+                        "description": "ok",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert load_cached(c, sha) == {
+        2: _ld("content", "ok"),
     }
 
 
@@ -282,6 +334,7 @@ def test_ensure_layout_descriptions_fills_only_missing(
                         "name": "A",
                         "slide_type": "header",
                         "slide_has_image_placeholder": False,
+                        "content_zones_count": 1,
                         "description": "cached0",
                     },
                 ],

@@ -82,11 +82,13 @@ class CodeGenerator:
         )
         text = (result.description or "").replace("\n", " ").strip()
         logger.info(
-            "Layout describe: idx=%s name=%r slide_type=%s slide_has_image_placeholder=%s -> %s",
+            "Layout describe: idx=%s name=%r slide_type=%s slide_has_image_placeholder=%s "
+            "zones=%s -> %s",
             layout.index,
             layout.name,
             result.slide_type,
             result.slide_has_image_placeholder,
+            result.content_zones_count,
             text,
             extra={"color_event": "layout_select"},
         )
@@ -100,7 +102,7 @@ class CodeGenerator:
         layouts: list[LayoutInfo],
         style_content: str | None = None,
         language: str | None = None,
-        descriptions: dict[int, str] | None = None,
+        descriptions: dict[int, LayoutDescription] | None = None,
     ) -> LayoutSelection:
         """
         Choose the best `prs.slide_layouts[index]` for a slide (template decks only).

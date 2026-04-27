@@ -1,6 +1,7 @@
 """Prompt shape regression tests."""
 
 from src.layout_catalog import LayoutInfo
+from src.models import LayoutDescription
 from src.prompts import (
     SYSTEM_PROMPT,
     SYSTEM_PROMPT_INCREMENTAL_SLIDE,
@@ -122,6 +123,14 @@ def test_format_layout_describe_user_message_with_descriptions_in_selection() ->
         allowed_indices=[0],
         style_content=None,
         language=None,
-        descriptions={0: "Test description for this layout."},
+        descriptions={
+            0: LayoutDescription(
+                slide_type="content",
+                slide_has_image_placeholder=False,
+                content_zones_count=2,
+                description="Test description for this layout.",
+            ),
+        },
     )
     assert "desc: Test description" in msg
+    assert "zones=2" in msg

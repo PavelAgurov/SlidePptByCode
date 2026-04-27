@@ -2,6 +2,7 @@
 
 from .code_merger import CHUNK_MERGE_MARKER
 from .layout_catalog import LayoutInfo, format_layout_card_full, format_layouts_catalog_with_descriptions
+from .models import LayoutDescription
 from .snippets import formatted_snippet_catalog_for_prompt
 
 _ERROR_PROMPT_CODE_MAX = 16_000
@@ -437,6 +438,7 @@ Your job:
 SELECTION HEURISTICS:
 - Prefer layouts whose name clearly matches the intent (e.g., \"Agenda\", \"Section Header\", \"Quote\", \"Comparison\").
 - Use placeholder TYPE counts as a weak signal: e.g. many BODY placeholders often indicates agenda/list layouts.
+- Catalog lines may end with ``zones=N`` (distinct visual content regions from the template metadata). Use as a weak signal (e.g. side-by-side vs single canvas).
 - If the content is table-like or chart-like, prefer layouts that likely have BODY/OBJECT areas over title-only layouts.
 
 HARD RULES:
@@ -446,11 +448,11 @@ HARD RULES:
 """
 
 # Bumped when `SYSTEM_PROMPT_LAYOUT_DESCRIBE` meaningfully changes (invalidates on-disk cache).
-LAYOUT_DESC_CACHE_PROMPT_VERSION = 4
+LAYOUT_DESC_CACHE_PROMPT_VERSION = 5
 
 SYSTEM_PROMPT_LAYOUT_DESCRIBE = """You describe ONE PowerPoint master slide layout for a downstream agent that will pick a layout per slide.
 
-Use the layout name, placeholder types, placeholder names (often human-readable), any prompt/placeholder text from the template (e.g. time ranges or \"Section header here\"), and rough bbox/geometry to infer the slide's *intent* (what it is for), not just placeholder counts.
+Use the layout name, placeholder types, placeholder names (often human-readable), any prompt/placeholder text from the template (e.g. time ranges or \"Section header here\"), rough bbox/geometry, and the **Decorative shapes** section (non-placeholder rectangles, freeforms, pictures on the layout) to infer the slide's *intent* (what it is for), not just placeholder counts.
 Do not equate a layout named \"Content\" with generic body text if prompt text and structure indicate a table of contents, agenda, or section list.
 
 ``content`` vs ``header`` (critical):
@@ -464,6 +466,12 @@ You MUST set ``slide_type`` (structured field) to exactly one of:
 - ``other`` — does not fit the above (e.g. picture-with-caption only, vertical-title specialty). Use sparingly; do **not** use ``other`` for minimal-placeholder decks that are clearly meant for freeform body slides.
 
 You MUST set ``slide_has_image_placeholder`` (boolean): ``true`` if the layout has a dedicated **PICTURE** / image placeholder (a slot meant for a user-supplied photo or large graphic — check placeholder **type** names in the card, e.g. PICTURE). ``false`` if there is no such placeholder (text/body/subtitle only and/or blank canvas). Small fixed brand marks in the master are **not** a picture placeholder.
+
+You MUST set ``content_zones_count`` (integer >= 1): the number of distinct top-level **visual content regions** on the layout.
+- ``1`` — single content area: one BODY/CONTENT (or similar) placeholder, **or** no body placeholder but one large empty canvas intended for arbitrary material. Footer / logo / slide-number chrome do **not** split the canvas into a second zone.
+- ``2`` — clear split into two top-level regions: e.g. two BODY placeholders side-by-side, or one BODY + one PICTURE, **or** a large decorative shape under **Decorative shapes** (background rectangle, chevron, freeform panel) that visibly partitions the slide into two major areas (e.g. left black panel + right white panel).
+- ``3+`` — three or more such top-level regions (e.g. three-column comparison).
+Count **zones**, not bullet items inside one placeholder. Purely decorative accents that do not define a separate main content area do not increase the count.
 
 Return only structured output (see response model). ``description``: one English sentence, no markdown, at most 160 characters.
 """
@@ -679,7 +687,7 @@ def format_layout_selection_user_message(
     allowed_indices: list[int],
     style_content: str | None,
     language: str | None,
-    descriptions: dict[int, str] | None = None,
+    descriptions: dict[int, LayoutDescription] | None = None,
 ) -> str:
     catalog = format_layouts_catalog_with_descriptions(layouts, descriptions)
     parts = [

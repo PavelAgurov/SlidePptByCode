@@ -269,9 +269,7 @@ def run_incremental_pipeline(
         ]
         if not filtered:
             return None
-        desc_subset = {
-            li.index: layout_descriptions[li.index].description for li in filtered
-        }
+        desc_subset = {li.index: layout_descriptions[li.index] for li in filtered}
         sel = generator.select_layout(
             slide_markdown=slide_markdown,
             deck_title=deck_title,

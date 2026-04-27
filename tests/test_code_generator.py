@@ -201,6 +201,7 @@ def test_describe_layout_does_not_mutate_conversation_history(
     mock_llm_client.generate_structured.return_value = LayoutDescription(
         slide_type="agenda",
         slide_has_image_placeholder=False,
+        content_zones_count=2,
         description="Agenda-style layout with timed rows.",
     )
     generator.conversation_history = [{"role": "system", "content": "SYS"}]
@@ -271,8 +272,16 @@ def test_select_layout_passes_descriptions_to_user_message(
         slide_markdown="x",
         deck_title="D",
         layouts=layouts,
-        descriptions={0: "Line one."},
+        descriptions={
+            0: LayoutDescription(
+                slide_type="content",
+                slide_has_image_placeholder=False,
+                content_zones_count=2,
+                description="Line one.",
+            ),
+        },
     )
     call = mock_llm_client.generate_structured.call_args
     user = call[0][0][1]["content"]
     assert "desc: Line one." in user
+    assert "zones=2" in user

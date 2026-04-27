@@ -89,10 +89,14 @@ def load_cached(
             has_img = bool(raw_img)
         else:
             continue
+        raw_zc = row.get("content_zones_count")
+        if not isinstance(raw_zc, int) or raw_zc < 1:
+            continue
         try:
             out[idx] = LayoutDescription(
                 slide_type=st,
                 slide_has_image_placeholder=has_img,
+                content_zones_count=raw_zc,
                 description=desc,
             )
         except ValidationError:
@@ -108,7 +112,7 @@ def save_cache(
     layouts: list[LayoutInfo],
     descriptions: dict[int, LayoutDescription],
 ) -> None:
-    rows: list[dict[str, str | int]] = []
+    rows: list[dict[str, str | int | bool]] = []
     for li in sorted(layouts, key=lambda x: x.index):
         ld = descriptions.get(li.index)
         if ld is None:
@@ -122,6 +126,7 @@ def save_cache(
                 "name": li.name,
                 "slide_type": ld.slide_type,
                 "slide_has_image_placeholder": ld.slide_has_image_placeholder,
+                "content_zones_count": ld.content_zones_count,
                 "description": d,
             }
         )
@@ -166,7 +171,8 @@ def ensure_layout_descriptions(
     generated_dir: Path,
 ) -> dict[int, LayoutDescription]:
     """
-    Return index -> ``LayoutDescription`` (slide_type, slide_has_image_placeholder, description).
+    Return index -> ``LayoutDescription`` (slide_type, slide_has_image_placeholder,
+    content_zones_count, description).
 
     Missing indices fall back to compact layout lines without ``desc:`` in
     selection prompts.
