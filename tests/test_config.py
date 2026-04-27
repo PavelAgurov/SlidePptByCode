@@ -12,7 +12,7 @@ def test_settings_defaults():
     assert settings.model_id == "gpt-4.1-mini"
     assert settings.base_url == "https://openrouter.ai/api/v1"
     assert settings.temperature == 0
-    assert settings.max_retries == 3
+    assert settings.max_retries == 50
     assert settings.execution_timeout == 60
     assert settings.generated_dir == Path(".generated")
     assert settings.output_dir == Path(".output")

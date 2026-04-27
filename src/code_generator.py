@@ -505,7 +505,6 @@ class CodeGenerator:
             section_ordinal,
             num_slides,
             deck_title,
-            extra={"color_event": "gen_section"},
         )
         self.style_content = style_content
         chosen_block: str | None = None

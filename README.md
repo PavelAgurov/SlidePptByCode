@@ -273,7 +273,7 @@ OPENROUTER_API_KEY=your_api_key_here
 MODEL_ID=gpt-4.1-mini
 BASE_URL=https://openrouter.ai/api/v1
 TEMPERATURE=0
-MAX_RETRIES=3
+MAX_RETRIES=50
 EXECUTION_TIMEOUT=60
 ```
 

@@ -56,6 +56,23 @@ def test_color_formatter_wraps_tool_call_when_enabled() -> None:
     assert out.endswith("\033[0m")
 
 
+def test_layout_select_failed_uses_red() -> None:
+    fmt = ColorFormatter("%(message)s", use_color=True)
+    r = logging.LogRecord(
+        name="t",
+        level=logging.INFO,
+        pathname="",
+        lineno=0,
+        msg="Slide 1/2: layout selection failed; using default",
+        args=(),
+        exc_info=None,
+    )
+    r.color_event = "layout_select_failed"
+    out = fmt.format(r)
+    assert out.startswith("\033[31m")
+    assert out.endswith("\033[0m")
+
+
 def test_tool_result_uses_dim() -> None:
     fmt = ColorFormatter("%(message)s", use_color=True)
     r = logging.LogRecord(

@@ -26,7 +26,9 @@ class ColorFormatter(logging.Formatter):
     - ``llm_structured_ok`` — final structured parse succeeded (green)
     - ``llm_round`` — debug: parse+tools round (dim)
     - ``tool_error`` — tool guard / unknown tool (red, often WARNING level)
-    - ``gen_section`` — start of a new LLM block (H1 once, each H2 slide once; not retries)
+    - ``layout_select_failed`` — incremental layout selection fell back to snippet picking (red)
+    - ``gen_section`` — start of a new LLM block (shared module extend, incremental
+      ``Slide … chosen layout``, etc.; not retries)
 
     ``ERROR`` / ``WARNING`` without ``color_event`` still get red / yellow.
     """
@@ -68,7 +70,7 @@ class ColorFormatter(logging.Formatter):
                 f"{self.BOLD}{self.UNDERLINE}{self.BRIGHT_BLUE}{msg}"
                 f"{self.RESET}"
             )
-        if ev in ("tool_error", "snippet_error"):
+        if ev in ("tool_error", "snippet_error", "layout_select_failed"):
             return f"{self.RED}{msg}{self.RESET}"
 
         if record.levelno >= logging.ERROR:

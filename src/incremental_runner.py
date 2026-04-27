@@ -351,7 +351,7 @@ def run_incremental_pipeline(
                 kind,
                 chosen_layout.index,
                 chosen_layout.name,
-                extra={"color_event": "layout_select"},
+                extra={"color_event": "gen_section"},
             )
 
         slide_code = generator.generate_incremental_slide(

@@ -120,7 +120,7 @@ def _fill_summary(shape) -> str:
         except Exception:
             return ""
         try:
-            type_name = str(ft).split(".")[-1].split("(", 1)[0].strip().upper()
+            type_name = str(ft).rsplit(".", maxsplit=1)[-1].split("(", 1)[0].strip().upper()
         except Exception:
             type_name = ""
 

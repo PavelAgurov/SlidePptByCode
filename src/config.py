@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     llm_max_tokens: int = 16_384
 
     # Execution Configuration
-    max_retries: int = 3
+    max_retries: int = 50
     execution_timeout: int = 60
 
     # Directory Configuration
