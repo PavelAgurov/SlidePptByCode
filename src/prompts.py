@@ -157,8 +157,16 @@ INSTRUCTIONS:
 1. Fix the root cause shown in the traceback.
 2. Call ``get_code_snippet`` if you need canonical python-pptx examples.
 3. For incremental H2: use attribute names from the shared symbol index above exactly — do not invent names.
-4. If the traceback mentions ``KeyError`` / ``no placeholder on this slide with idx`` / ``placeholders[...]``, stop using numeric placeholder indices: pick a title+content layout and resolve the body via ``PP_PLACEHOLDER_TYPE`` (see ``get_code_snippet`` with ``incremental_h2_skeleton`` or ``content_slide``).
-5. Return the complete corrected script (entire file body you would save as .py), not a minimal diff.
+4. If the traceback shows **AttributeError** involving:
+   - ``Chart`` objects (e.g. missing ``plot_area`` / ``chart_area``), OR
+   - ``PresentationPart`` objects (e.g. missing ``chart_data_class``),
+   then you MUST NOT guess APIs. First call ``get_code_snippet`` for:
+   - ``chart_imports`` and the relevant chart snippet (``line_chart`` / ``column_chart`` / ``pie_chart``), AND
+   - ``chart_safe_styling`` for portable styling.
+   Then rewrite your code to match those snippets exactly.
+5. HARD FORBIDDENS (do not output these strings anywhere in code): ``chart_data_class``, ``.plot_area``, ``.chart_area``.
+6. If the traceback mentions ``KeyError`` / ``no placeholder on this slide with idx`` / ``placeholders[...]``, stop using numeric placeholder indices: pick a title+content layout and resolve the body via ``PP_PLACEHOLDER_TYPE`` (see ``get_code_snippet`` with ``incremental_h2_skeleton`` or ``content_slide``).
+7. Return the complete corrected script (entire file body you would save as .py), not a minimal diff.
 
 ORIGINAL SCRIPT (may be truncated from the start if very long):
 ```python

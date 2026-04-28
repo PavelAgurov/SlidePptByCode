@@ -26,6 +26,7 @@ class SnippetId(StrEnum):
     LINE_CHART = "line_chart"
     PIE_CHART = "pie_chart"
     STYLE_CHART_SERIES = "style_chart_series"
+    CHART_SAFE_STYLING = "chart_safe_styling"
     TABLE_MARKDOWN_GRID = "table_markdown_grid"
     INCREMENTAL_H1_SKELETON = "incremental_h1_skeleton"
     INCREMENTAL_H2_SKELETON = "incremental_h2_skeleton"
@@ -48,6 +49,10 @@ SNIPPET_DESCRIPTIONS: dict[SnippetId, str] = {
     SnippetId.LINE_CHART: "Line chart with markers and legend styling.",
     SnippetId.PIE_CHART: "Pie chart with legend on the right.",
     SnippetId.STYLE_CHART_SERIES: "Apply RGB fills to each series (uses hex_to_rgb helper).",
+    SnippetId.CHART_SAFE_STYLING: (
+        "Minimal chart styling that avoids non-portable attributes like "
+        "Chart.plot_area / Chart.chart_area."
+    ),
     SnippetId.TABLE_MARKDOWN_GRID: (
         "Parse GitHub-style pipe tables from markdown text and fill a native "
         "``slide.shapes.add_table`` (not a bullet list of raw '|' characters)."
@@ -310,6 +315,21 @@ for idx, series in enumerate(chart.series):
 for series in chart.series:
     series.has_data_labels = True
     series.data_labels.font.size = Pt(10)
+""".strip(),
+    SnippetId.CHART_SAFE_STYLING: """
+# Minimal, portable styling. Avoids Chart.plot_area / Chart.chart_area which are
+# not available in some python-pptx builds.
+#
+# Assumes you already created `chart = ... .chart`.
+from pptx.util import Pt
+
+chart.has_legend = True
+chart.legend.font.size = Pt(10)
+
+# Optional: enable labels; safe across chart types.
+for series in chart.series:
+    series.has_data_labels = True
+    series.data_labels.font.size = Pt(9)
 """.strip(),
     SnippetId.INCREMENTAL_H1_SKELETON: """
 # Paths DECK_PPTX_PATH and SHARED_PY_PATH are injected by the orchestrator.

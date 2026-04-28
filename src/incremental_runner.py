@@ -10,6 +10,7 @@ import shutil
 import traceback as _tb
 from pathlib import Path
 
+import pptx
 from pptx import Presentation
 
 from src.code_executor import CodeExecutor
@@ -31,6 +32,19 @@ from src.validator import (
 )
 
 logger = logging.getLogger(__name__)
+
+_FORBIDDEN_CODE_TOKENS: tuple[str, ...] = (
+    "chart_data_class",
+    ".plot_area",
+    ".chart_area",
+)
+
+
+def _first_forbidden_token(code: str) -> str | None:
+    for tok in _FORBIDDEN_CODE_TOKENS:
+        if tok in code:
+            return tok
+    return None
 
 
 def _sha256_file(path: Path) -> str:
@@ -153,6 +167,11 @@ def run_incremental_pipeline(
         (success, deck_path_or_none, error_log)
     """
     error_log: list[str] = []
+    try:
+        ver = getattr(pptx, "__version__", None)
+        logger.info("python-pptx version: %s", ver if ver else "<unknown>")
+    except Exception:  # noqa: BLE001
+        logger.info("python-pptx version: <failed to read>")
     chunks = split_into_chunks(task_content)
     h2_all = [c for c in chunks if c.kind == "h2"]
     preamble = next(c for c in chunks if c.kind == "preamble")
@@ -368,6 +387,34 @@ def run_incremental_pipeline(
         deck_backup = deck_path.with_suffix(deck_path.suffix + ".bak")
 
         for attempt in range(max_retries):
+            forbidden = _first_forbidden_token(slide_code)
+            if forbidden is not None:
+                msg = f"Forbidden python-pptx API token detected in generated code: {forbidden}"
+                error_log.append(
+                    f"Slide {ord1} ({kind}) pre-exec guard attempt {attempt + 1}: {msg}"
+                )
+                if attempt >= max_retries - 1:
+                    return False, None, error_log
+                slide_code = generator.fix_code_after_error(
+                    slide_code,
+                    CodeExecutionResult(
+                        success=False,
+                        error_message=msg,
+                        traceback=(
+                            "The orchestrator blocked execution because the code contains a "
+                            f"known-nonportable/invalid token: {forbidden}\n"
+                            "Remove it and use chart snippets (chart_imports, line_chart/column_chart/pie_chart, "
+                            "chart_safe_styling) instead."
+                        ),
+                        stdout="",
+                        stderr="",
+                    ),
+                    incremental=True,
+                    shared_index=shared_index,
+                    chosen_layout=chosen_layout,
+                ).code
+                continue
+
             scratch_path = scratch_dir / f"slide_{ord1:03d}_try{attempt + 1}.pptx"
             shutil.copy2(deck_path, scratch_path)
             baseline = deck_slide_count_before

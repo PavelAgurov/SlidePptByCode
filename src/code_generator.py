@@ -58,6 +58,9 @@ class CodeGenerator:
         self.llm_client = llm_client
         self.conversation_history: list[dict[str, Any]] = []
         self.style_content: str | None = None
+        # Per-slide rolling memory so incremental fix attempts don't repeat
+        # the exact same failing patterns in a loop.
+        self._incremental_error_history: list[str] = []
 
     def _structured_with_snippets(self, messages: list[dict[str, Any]], response_format: type[Any]) -> Any:
         """One LLM call (possibly multi-round tool use) with a fresh snippet cache."""
@@ -317,9 +320,28 @@ class CodeGenerator:
         """
         logger.info(f"Fixing code after error: {error_result.error_message}")
 
-        if incremental and len(self.conversation_history) >= 2:
-            sys_msg = self.conversation_history[0]["content"]
-            task_user = self.conversation_history[1]["content"]
+        if incremental:
+            # Keep a short memory of previous failures so the model can avoid
+            # repeating the same incorrect API calls across retries.
+            tb = (error_result.traceback or "").strip()
+            tail = ""
+            if tb:
+                tail = tb.splitlines()[-1].strip()
+            sig = tail or (error_result.error_message or "").strip() or "Unknown error"
+            if sig:
+                self._incremental_error_history.append(sig)
+                self._incremental_error_history = self._incremental_error_history[-3:]
+
+            prev_block = ""
+            if len(self._incremental_error_history) > 1:
+                prev_lines = "\n".join(
+                    f"- {s}" for s in self._incremental_error_history[:-1]
+                )
+                prev_block = (
+                    "PREVIOUS FAILURES (do NOT repeat the same mistake):\n"
+                    f"{prev_lines}\n\n"
+                )
+
             error_prompt = format_incremental_execution_error_fix_prompt(
                 original_code=original_code,
                 error_message=error_result.error_message or "Unknown error",
@@ -328,6 +350,7 @@ class CodeGenerator:
                 stderr=error_result.stderr or "",
                 shared_index=shared_index,
             )
+            error_prompt = prev_block + error_prompt
             if chosen_layout is not None:
                 error_prompt = (
                     "## SELECTED LAYOUT (already chosen by orchestrator — DO NOT pick another):\n"
@@ -337,18 +360,10 @@ class CodeGenerator:
                     + "\n\n"
                     + error_prompt
                 )
-            self.conversation_history = [
-                {"role": "system", "content": sys_msg},
-                {"role": "user", "content": task_user},
-                {
-                    "role": "assistant",
-                    "content": (
-                        "A previous script attempt failed; the next user message has "
-                        "the traceback and the script to fix."
-                    ),
-                },
-                {"role": "user", "content": error_prompt},
-            ]
+            # IMPORTANT: do not reset the conversation. Keeping the prior assistant
+            # code + previous error prompts helps the model converge instead of
+            # regenerating the same buggy variant.
+            self.conversation_history.append({"role": "user", "content": error_prompt})
         else:
             error_prompt = format_error_fix_prompt(
                 original_code=original_code,
@@ -532,6 +547,7 @@ class CodeGenerator:
             {"role": "system", "content": SYSTEM_PROMPT_INCREMENTAL_SLIDE},
             {"role": "user", "content": user},
         ]
+        self._incremental_error_history = []
         raw = self._structured_with_snippets(
             self.conversation_history,
             IncrementalLlmScriptCode,
